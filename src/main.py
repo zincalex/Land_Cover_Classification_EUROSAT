@@ -10,7 +10,7 @@
 import os               # paths
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
-from PIL import Image
+import tifffile
 #from osgeo import gdal  from tif to rgb
 from tqdm import tqdm   # progress bar
 
@@ -91,21 +91,19 @@ def main () :
         
         for i in range(m_training) : 
             img_path = label_dir + '/' + images[i]
-            tif_img = Image.open(img_path)
-            train_instances.append(np.array(tif_img))
+            train_instances.append(tifffile.imread(img_path))
             train_label.append(dict_class[label])
 
         for i in range(m_training, len(images)) :               # the remaining images are for the test set 
             img_path = label_dir + '/' + images[i]
-            tif_img = Image.open(img_path)
-            test_instances.append(np.array(tif_img))
+            test_instances.append(tifffile.imread(img_path))
             test_label.append(dict_class[label])
 
         
     # Define transformations to apply to the images (e.g., resizing, normalization)
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),  # Resize images to 224x224
-        transforms.ToTensor(),           # Convert images to PyTorch tensors
+        #transforms.Resize((224, 224)),  # Resize images to 224x224
+        #transforms.ToTensor(),           # Convert images to PyTorch tensors
         #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalize images
     ])
     
@@ -119,7 +117,7 @@ def main () :
     test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
     
     
-    print(train_dataset.__getitem__(500))
+    print(train_dataset.__getitem__(2401))
     
     
 
