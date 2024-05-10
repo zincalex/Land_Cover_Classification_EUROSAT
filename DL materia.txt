@@ -1,0 +1,9 @@
+ResNet : 
+	(import) https://pytorch.org/hub/pytorch_vision_resnet/
+	(architecture) https://datagen.tech/guides/computer-vision/resnet-50/#
+	(pre trained) https://gist.github.com/nudles/e7c739b12f4409953bb498d5dadb4543
+	(better pretrained, directly pytorch) https://pytorch.org/vision/stable/models.html
+
+
+Resources : 
+	(OG paper) https://arxiv.org/abs/1709.00029
