@@ -11,7 +11,7 @@ import os               # paths
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
 import tifffile
-#from osgeo import gdal  from tif to rgb
+from osgeo import gdal  
 from tqdm import tqdm   # progress bar
 
 # torch

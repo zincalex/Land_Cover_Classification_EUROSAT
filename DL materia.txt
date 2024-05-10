@@ -13,3 +13,7 @@ Resources :
 
 Images : 
 	(Tif viewer) https://imagetostl.com/view-tif-online#convert -----> not working kinda sus
+
+GDAL : 
+	(download fast windows) : https://gis.stackexchange.com/questions/475387/installing-gdal-for-python
+				Download this + on terminal "pip install program_downloaded"
