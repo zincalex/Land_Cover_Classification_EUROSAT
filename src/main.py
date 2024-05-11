@@ -57,9 +57,11 @@ class EuroSATDataset(Dataset) :
     def __getitem__(self, idx):
         return self.transform(self.instances[idx]), self.labels[idx] 
 
-
-
-
+def load_tif_channels(img_path, bands_selected):
+    file = tifffile.imread(img_path)
+    channels = file[..., bands_selected]
+    channels = channels.astype(np.float32)/65535.0
+    return channels
 
 def main () : 
 
@@ -72,6 +74,7 @@ def main () :
     lr = 1e-4                                   # learning rate
     factor = 20                                 # learning rate factor for tuning
     epochs = 5                                  # fixed number of epochs
+    bands_selected = [4,3,2]                    # bands selected to analyze 4 3 2 is RGB 
 
 
     # DATASET
@@ -83,6 +86,7 @@ def main () :
 
     num_classes = len(labels)                   # number of classes, 10 for the EuroSAT dataset
     
+
 
     train_instances, train_label, test_instances, test_label = [], [], [], []
     
@@ -96,20 +100,21 @@ def main () :
         
             for i in range(m_training) : 
                 img_path = label_dir + '/' + images[i]
-                train_instances.append(Image.open(img_path).convert('RGB'))
-                #train_instances.append(tifffile.imread(img_path))
+                #train_instances.append(Image.open(img_path).convert('RGB'))
+                train_instances.append(load_tif_channels(img_path, bands_selected))
                 train_label.append(dict_class[label])
 
             for i in range(m_training, len(images)) :               # the remaining images are for the test set 
                 img_path = label_dir + '/' + images[i]
-                test_instances.append(Image.open(img_path).convert('RGB'))
-                #test_instances.append(tifffile.imread(img_path))
+                #test_instances.append(Image.open(img_path).convert('RGB'))
+                test_instances.append(load_tif_channels(img_path, bands_selected))
                 test_label.append(dict_class[label])
             pbar.update(1)
 
         
     # Define transformations to apply to the images (e.g., resizing, normalization)
     transform = transforms.Compose([
+        transforms.ToPILImage(),
         transforms.Resize(256),  # Resize images to 224x224
         transforms.CenterCrop(224),
         transforms.ToTensor(),           # Convert images to PyTorch tensors
@@ -134,8 +139,6 @@ def main () :
     # RESNET50 
     model = resnet50(weights = ResNet50_Weights.DEFAULT)
     model.to(DEVICE)
-    #model.conv1 = nn.Conv2d(bands, 64, kernel_size=7, stride=2, padding=3, bias=False)
-    #model.fc = nn.Linear(model.fc.in_features, num_classes)
     loss_funct = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
@@ -158,8 +161,6 @@ def main () :
             print('Training loss: ', loss.item(), 'epoch: ', epoch)
                 
                 
-
-
 
 
 
