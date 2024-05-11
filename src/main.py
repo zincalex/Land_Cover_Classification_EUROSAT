@@ -10,6 +10,7 @@
 import os               # paths
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
+from PIL import Image
 import tifffile
 from osgeo import gdal  
 from tqdm import tqdm   # progress bar
@@ -25,13 +26,15 @@ from torchvision.models import resnet50, ResNet50_Weights
 
 
 DEVICE = (
-    "cuda"
+    "cuda:0"
     if torch.cuda.is_available()
     else "mps"
     if torch.backends.mps.is_available()
     else "cpu"
 )
 torch.set_default_device(DEVICE)
+if torch.cuda.is_available():
+    g = torch.Generator(device='cuda')
 print(f"Using {DEVICE} device")
 
 # CLASSES AND FUNCTIONS 
@@ -82,29 +85,35 @@ def main () :
     
 
     train_instances, train_label, test_instances, test_label = [], [], [], []
-    for label in os.listdir(dataset_path) :
-        label_dir = os.path.join(dataset_path, label)
-        images = os.listdir(label_dir)
+    
+    with tqdm(total=num_classes,  unit='label') as pbar:
+        for label in os.listdir(dataset_path) :
+            label_dir = os.path.join(dataset_path, label)
+            images = os.listdir(label_dir)
 
-        m_training = int(len(images) * fraction_train)
-        m_test = int(len(images) * fraction_test)
+            m_training = int(len(images) * fraction_train)
+            m_test = int(len(images) * fraction_test)
         
-        for i in range(m_training) : 
-            img_path = label_dir + '/' + images[i]
-            train_instances.append(tifffile.imread(img_path))
-            train_label.append(dict_class[label])
+            for i in range(m_training) : 
+                img_path = label_dir + '/' + images[i]
+                train_instances.append(Image.open(img_path).convert('RGB'))
+                #train_instances.append(tifffile.imread(img_path))
+                train_label.append(dict_class[label])
 
-        for i in range(m_training, len(images)) :               # the remaining images are for the test set 
-            img_path = label_dir + '/' + images[i]
-            test_instances.append(tifffile.imread(img_path))
-            test_label.append(dict_class[label])
+            for i in range(m_training, len(images)) :               # the remaining images are for the test set 
+                img_path = label_dir + '/' + images[i]
+                test_instances.append(Image.open(img_path).convert('RGB'))
+                #test_instances.append(tifffile.imread(img_path))
+                test_label.append(dict_class[label])
+            pbar.update(1)
 
         
     # Define transformations to apply to the images (e.g., resizing, normalization)
     transform = transforms.Compose([
-        #transforms.Resize((224, 224)),  # Resize images to 224x224
-        #transforms.ToTensor(),           # Convert images to PyTorch tensors
-        #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalize images
+        transforms.Resize(256),  # Resize images to 224x224
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),           # Convert images to PyTorch tensors
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalize images
     ])
     
     
@@ -112,41 +121,43 @@ def main () :
     train_dataset = EuroSATDataset(train_instances, train_label, transform)  
     test_dataset = EuroSATDataset(test_instances, test_label, transform)  
 
+
     
-    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
-    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
+    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator=g)
+    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator=g)
     
     
-    print(train_dataset.__getitem__(2401))
+    #print(train_dataset.__getitem__(2401))
     
     
 
-    # RESNET50
+    # RESNET50 
     model = resnet50(weights = ResNet50_Weights.DEFAULT)
-    model.conv1 = nn.Conv2d(bands, 64, kernel_size=7, stride=2, padding=3, bias=False)
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model.to(DEVICE)
+    #model.conv1 = nn.Conv2d(bands, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    #model.fc = nn.Linear(model.fc.in_features, num_classes)
     loss_funct = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
-    model.to(DEVICE)
     with tqdm(total=epochs, unit='epoch') as pbar:
         for epoch in range(epochs):
-            model.train()
-            for images, labels in train_data_loader:
-                images, labels = images.to(DEVICE), labels.to(DEVICE)
-
-                outputs = model(images)
-                loss = loss_funct(outputs, labels)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                print('Training loss: ', loss.item(), 'epoch: ', epoch)
-            pbar.update(1)
-                
-                
             
+            running_loss = 0.0
+            with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
+                for i, data in enumerate(train_data_loader):
+                    images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
 
+                    optimizer.zero_grad()
+
+                    outputs = model(images)
+                    loss = loss_funct(outputs, labels)
+                    loss.backward()
+                    optimizer.step()
+                    inpbar.update(1)
+            pbar.update(1)
+            print('Training loss: ', loss.item(), 'epoch: ', epoch)
+                
+                
 
 
 
