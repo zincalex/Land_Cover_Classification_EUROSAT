@@ -10,7 +10,6 @@
 import os               # paths
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
-from PIL import Image
 import tifffile
 from osgeo import gdal  
 from tqdm import tqdm   # progress bar
@@ -23,10 +22,8 @@ from torchvision import transforms, datasets
 from torchvision.models import resnet50, ResNet50_Weights
 
 
-
-
 DEVICE = (
-    "cuda:0"
+    "cuda" 
     if torch.cuda.is_available()
     else "mps"
     if torch.backends.mps.is_available()
@@ -34,8 +31,11 @@ DEVICE = (
 )
 torch.set_default_device(DEVICE)
 if torch.cuda.is_available():
-    g = torch.Generator(device='cuda')
+    g_cuda = torch.Generator(device='cuda')
 print(f"Using {DEVICE} device")
+
+
+
 
 # CLASSES AND FUNCTIONS 
 class EuroSATDataset(Dataset) : 
@@ -47,7 +47,7 @@ class EuroSATDataset(Dataset) :
         transform (callable): transform to apply to the instances
     """
     def __init__(self, instances, labels, transform):
-        self.labels = labels  
+        self.labels = labels                                     # class
         self.instances = instances                               # images
         self.transform = transform                               # transforms
 
@@ -57,39 +57,42 @@ class EuroSATDataset(Dataset) :
     def __getitem__(self, idx):
         return self.transform(self.instances[idx]), self.labels[idx] 
 
+
+
+
 def load_tif_channels(img_path, bands_selected):
     file = tifffile.imread(img_path)
     channels = file[..., bands_selected]
     channels = channels.astype(np.float32)/65535.0
     return channels
 
+
+
 def main () : 
 
     # PARAMETERS
-    input_size = (64, 64)                       # image size
-    bands = 13                                  # number of channels
-    fraction_train = 0.8                        # training split
-    fraction_test = 1 - fraction_train          # test split
-    batch_size = 32                             # batch size
-    lr = 1e-4                                   # learning rate
-    factor = 20                                 # learning rate factor for tuning
-    epochs = 5                                  # fixed number of epochs
-    bands_selected = [4,3,2]                    # bands selected to analyze 4 3 2 is RGB 
+    input_size = (64, 64)                                               # image size
+    bands = 13                                                          # number of channels
+    fraction_train = 0.8                                                # training split
+    fraction_test = 1 - fraction_train                                  # test split
+    batch_size = 32                                                     # batch size
+    lr = 1e-4                                                           # learning rate
+    factor = 20                                                         # learning rate factor for tuning
+    epochs = 2                                                          # fixed number of epochs
+    #bands_selected = [0,1,2,3,4,5,6,7,8,9,10,11,12]                    # bands selected to analyze 4 3 2 is RGB 
+    bands_selected = [4,3,2]
 
 
     # DATASET
     dataset_path = '../dataset/'
     labels = os.listdir(dataset_path) 
+    num_classes = len(labels)                   # number of classes, 10 for the EuroSAT dataset
+
     dict_class = {}
     for i in range(len(labels)) : 
         dict_class.update({labels[i] : i + 1})
 
-    num_classes = len(labels)                   # number of classes, 10 for the EuroSAT dataset
-    
-
-
     train_instances, train_label, test_instances, test_label = [], [], [], []
-    
     with tqdm(total=num_classes,  unit='label') as pbar:
         for label in os.listdir(dataset_path) :
             label_dir = os.path.join(dataset_path, label)
@@ -97,7 +100,6 @@ def main () :
 
             m_training = int(len(images) * fraction_train)
             m_test = int(len(images) * fraction_test)
-        
             for i in range(m_training) : 
                 img_path = label_dir + '/' + images[i]
                 #train_instances.append(Image.open(img_path).convert('RGB'))
@@ -115,25 +117,16 @@ def main () :
     # Define transformations to apply to the images (e.g., resizing, normalization)
     transform = transforms.Compose([
         transforms.ToPILImage(),
-        transforms.Resize(256),  # Resize images to 224x224
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),           # Convert images to PyTorch tensors
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalize images
+        transforms.Resize(256),                                                                 # Resize images to 256x256
+        transforms.CenterCrop(224),                                                             # Crop the images to our desired size
+        transforms.ToTensor(),                                                                  # Convert images to PyTorch tensors (standardization is automatically applied)
+        #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])            # Normalize images
     ])
     
-    
-
     train_dataset = EuroSATDataset(train_instances, train_label, transform)  
     test_dataset = EuroSATDataset(test_instances, test_label, transform)  
-
-
-    
-    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator=g)
-    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator=g)
-    
-    
-    #print(train_dataset.__getitem__(2401))
-    
+    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator=g_cuda)
+    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator=g_cuda)
     
 
     # RESNET50 
@@ -151,9 +144,10 @@ def main () :
                     images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
 
                     optimizer.zero_grad()
-
                     outputs = model(images)
                     loss = loss_funct(outputs, labels)
+
+                    # backward pass
                     loss.backward()
                     optimizer.step()
                     inpbar.update(1)
@@ -161,7 +155,6 @@ def main () :
             print('Training loss: ', loss.item(), 'epoch: ', epoch)
                 
                 
-
 
 
 def taskb ():
