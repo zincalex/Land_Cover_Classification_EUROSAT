@@ -1,4 +1,5 @@
 # TODO chiedere al prof quale sia migliore/convenzione tra patterns, instances, samples, etc....
+# TODO chiedere al prof perchè la prima run vada così lenta nel buildare il dataset
 # fixare if che controlla de nel dataset ci sono anche altri file o solo directory
 # dimensionality reduction, PCA
 
@@ -59,6 +60,31 @@ class EuroSATDataset(Dataset) :
     def __getitem__(self, idx):
         return self.transform(self.instances[idx]), self.labels[idx] 
 
+class EncoderDecoderCNN(nn.Module) :
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(13, 32, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.ReLU()
+        )
+        self.decoder = nn.Sequential (
+            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
 
 
 
@@ -67,6 +93,7 @@ def load_tif_channels(img_path, bands_selected):
     channels = file[..., bands_selected]
     channels = channels.astype(np.float32)/65535.0
     return channels
+
 
 
 
@@ -80,10 +107,10 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 2                                                          # fixed number of epochs
+    epochs = 10                                                          # fixed number of epochs
     #bands_selected = [0,1,2,3,4,5,6,7,8,9,10,11,12]                    # bands selected to analyze 4 3 2 is RGB 
     bands_selected = [4,3,2]
-
+    pretrained_flag = 0
 
     # DATASET
     dataset_path = '../dataset/'
@@ -95,6 +122,9 @@ def main () :
     for i in range(len(labels)) : 
         dict_class.update({labels[i] : i + 1})
 
+
+    
+    print("DATASET CREATION")
     train_instances, train_label, test_instances, test_label = [], [], [], []
     with tqdm(total=num_classes,  unit='label') as pbar:
         for label in os.listdir(dataset_path) :
@@ -123,61 +153,57 @@ def main () :
         transforms.Resize(256),                                                                 # Resize images to 256x256
         transforms.CenterCrop(224),                                                             # Crop the images to our desired size
         transforms.ToTensor(),                                                                  # Convert images to PyTorch tensors (standardization is automatically applied)
-        #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])            # Normalize images
+        #transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])                        # Normalize images
     ])
     
     train_dataset = EuroSATDataset(train_instances, train_label, transform)  
     test_dataset = EuroSATDataset(test_instances, test_label, transform)  
     train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
-    
+    print("DATASET CREATION COMPLETE")
+
 
     # RESNET50 
-
-
-
-
     model = resnet50(weights = ResNet50_Weights.DEFAULT)
     model.to(DEVICE)
     loss_funct = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
-    pretrained_model_path = '../pretrained/model_state.pth'
-    pretrained_flag = 1
-
-    if(pretrained_flag == 0):
-        with tqdm(total=epochs, unit='epoch') as pbar:
-            for epoch in range(epochs):
-                
-                running_loss = 0.0
-                with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
-                    for i, data in enumerate(train_data_loader):
-                        images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
-
-                        optimizer.zero_grad()
-                        outputs = model(images)
-                        loss = loss_funct(outputs, labels)
-
-                        # backward pass
-                        loss.backward()
-                        optimizer.step()
-                        inpbar.update(1)
-                pbar.update(1)
-                print('Training loss: ', loss.item(), 'epoch: ', epoch)
-                torch.save(model.state_dict(), pretrained_model_path)
-                print(f'\nSaved model to {pretrained_model_path}')
-    else:
     
+    pretrained_model_path = '../pretrained/model_state.pth'
+    if(pretrained_flag == 0):
+        for epoch in range(epochs):
+            
+            with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
+                for i, data in enumerate(train_data_loader):
+                    images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
+
+                    optimizer.zero_grad()
+                    outputs = model(images)
+                    loss = loss_funct(outputs, labels)
+
+                    # backward pass
+                    loss.backward()
+                    optimizer.step()
+                    inpbar.update(1)
+            pbar.update(1)
+            print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
+
+        print("\nSaving model...")
+        if not os.path.exists('pretrained') :
+                os.makedirs('pretrained')
+        torch.save(model.state_dict(), pretrained_model_path)
+        print(f'MODEL SAVED to {pretrained_model_path}')
+
+    else:
         model.load_state_dict(torch.load(pretrained_model_path, map_location=DEVICE))
         print("Pretrained model has been loaded")
 
     model.eval()
-
     total = 0
     correct_predictions = 0
 
-    print("Starting testing")
-
+    print("\nTESTING: START")
     with tqdm(total=len(test_data_loader), unit='instance') as testbar:
         for i, test_data in enumerate(test_data_loader):
             images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
@@ -185,18 +211,17 @@ def main () :
 
             _,predicted = torch.max(outputs, 1) #max 1 probability, takes the max probability inside the final softmax layer (::TODO:: check resnet softmax)
 
-            total += 1
+            total += labels.size(0)
             correct_predictions += (predicted == labels).sum().item()
             testbar.update(1)
     
-    accuracy = correct_predictions/total
+    accuracy = correct_predictions/total 
 
-    print(f'Testing completed, accuracy: {accuracy}')
+    print(f'TESTING : DONE')
+    print(F'Accuracy = {accuracy}')
 
 
-                
-                
-
+                 
 
 def taskb ():
     I = 2 
