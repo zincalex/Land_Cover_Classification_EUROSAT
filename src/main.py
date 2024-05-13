@@ -1,5 +1,6 @@
 # TODO chiedere al prof quale sia migliore/convenzione tra patterns, instances, samples, etc....
 # fixare if che controlla de nel dataset ci sono anche altri file o solo directory
+# dimensionality reduction, PCA
 
 # All resnet50 pretrained models require 3 x 224 x 224 sizes
 # Visto che il data set è diviso in cartelle, noi facciamo che prendiamo una cartella e prendiamo x% delle prime immagini
@@ -155,6 +156,30 @@ def main () :
                     inpbar.update(1)
             pbar.update(1)
             print('Training loss: ', loss.item(), 'epoch: ', epoch)
+
+    model.eval()
+
+    total = 0
+    correct_predictions = 0
+
+    print("Starting testing")
+
+    with tqdm(total=len(test_data_loader), unit='instance') as testbar:
+        for i, test_data in enumerate(test_data_loader):
+            images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
+            outputs = model(images)
+
+            _,predicted = torch.max(outputs, 1) #max 1 probability, takes the max probability inside the final softmax layer (::TODO:: check resnet softmax)
+
+            total += 1
+            correct_predictions += (predicted == labels).sum().item()
+            testbar.update(1)
+    
+    accuracy = correct_predictions/total
+
+    print(f'Testing completed, accuracy: {accuracy}')
+
+
                 
                 
 
