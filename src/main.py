@@ -133,29 +133,43 @@ def main () :
     
 
     # RESNET50 
+
+
+
+
     model = resnet50(weights = ResNet50_Weights.DEFAULT)
     model.to(DEVICE)
     loss_funct = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    pretrained_model_path = '../pretrained/model_state.pth'
+    pretrained_flag = 1
+
+    if(pretrained_flag == 0):
+        with tqdm(total=epochs, unit='epoch') as pbar:
+            for epoch in range(epochs):
+                
+                running_loss = 0.0
+                with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
+                    for i, data in enumerate(train_data_loader):
+                        images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
+
+                        optimizer.zero_grad()
+                        outputs = model(images)
+                        loss = loss_funct(outputs, labels)
+
+                        # backward pass
+                        loss.backward()
+                        optimizer.step()
+                        inpbar.update(1)
+                pbar.update(1)
+                print('Training loss: ', loss.item(), 'epoch: ', epoch)
+                torch.save(model.state_dict(), pretrained_model_path)
+                print(f'\nSaved model to {pretrained_model_path}')
+    else:
     
-    with tqdm(total=epochs, unit='epoch') as pbar:
-        for epoch in range(epochs):
-            
-            running_loss = 0.0
-            with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
-                for i, data in enumerate(train_data_loader):
-                    images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
-
-                    optimizer.zero_grad()
-                    outputs = model(images)
-                    loss = loss_funct(outputs, labels)
-
-                    # backward pass
-                    loss.backward()
-                    optimizer.step()
-                    inpbar.update(1)
-            pbar.update(1)
-            print('Training loss: ', loss.item(), 'epoch: ', epoch)
+        model.load_state_dict(torch.load(pretrained_model_path, map_location=DEVICE))
+        print("Pretrained model has been loaded")
 
     model.eval()
 
