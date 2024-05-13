@@ -1,5 +1,5 @@
 # TODO chiedere al prof quale sia migliore/convenzione tra patterns, instances, samples, etc....
-
+# fixare if che controlla de nel dataset ci sono anche altri file o solo directory
 
 # All resnet50 pretrained models require 3 x 224 x 224 sizes
 # Visto che il data set è diviso in cartelle, noi facciamo che prendiamo una cartella e prendiamo x% delle prime immagini
@@ -10,8 +10,7 @@
 import os               # paths
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
-import tifffile
-from osgeo import gdal  
+import tifffile  
 from tqdm import tqdm   # progress bar
 
 # torch
@@ -31,7 +30,9 @@ DEVICE = (
 )
 torch.set_default_device(DEVICE)
 if torch.cuda.is_available():
-    g_cuda = torch.Generator(device='cuda')
+    g_device = torch.Generator(device='cuda')
+if torch.backends.mps.is_available():
+    g_device = torch.Generator(device='mps')
 print(f"Using {DEVICE} device")
 
 
@@ -85,7 +86,8 @@ def main () :
 
     # DATASET
     dataset_path = '../dataset/'
-    labels = os.listdir(dataset_path) 
+    if(os.path.isdir(dataset_path)):
+        labels = os.listdir(dataset_path) 
     num_classes = len(labels)                   # number of classes, 10 for the EuroSAT dataset
 
     dict_class = {}
@@ -125,8 +127,8 @@ def main () :
     
     train_dataset = EuroSATDataset(train_instances, train_label, transform)  
     test_dataset = EuroSATDataset(test_instances, test_label, transform)  
-    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator=g_cuda)
-    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator=g_cuda)
+    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
+    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     
 
     # RESNET50 
