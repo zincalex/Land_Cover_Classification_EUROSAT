@@ -116,7 +116,7 @@ def load_data(img_path):
     return img_np_array.astype(np.float32)
 
 
-def save_model_parameters(model, model_parameters_path):
+def save_model_parameters(model, model_parameters_path, model_parameters_name):
     """Save the parameters of the model inside the specified path in a .pth file
 
     Args:
@@ -125,9 +125,10 @@ def save_model_parameters(model, model_parameters_path):
     """
     print("\nSaving model...")
     if not os.path.exists(model_parameters_path) :
-            os.makedirs(model_parameters_path)
-    torch.save(model.state_dict(), model_parameters_path)
-    print(f'MODEL SAVED to {model_parameters_path}')
+        os.makedirs(model_parameters_path)
+        print("sgrodo")
+    torch.save(model.state_dict(), model_parameters_path + '/' + model_parameters_name)
+    print(f'MODEL {model_parameters_name} SAVED to {model_parameters_path}')
 
 
 
@@ -136,7 +137,8 @@ def resnet50_training(model, train_data, lf, optimizer, epochs, bands_name):
     """
 
     """
-    model_parameters_path = f'../parameters/{bands_name}.pth'
+    model_parameters_path = '../parameters'
+    model_parameters_name = f'{bands_name}.pth'
     for epoch in range(epochs):    
         with tqdm(total=len(train_data), unit='instance') as inpbar:
             for data in train_data:
@@ -151,7 +153,7 @@ def resnet50_training(model, train_data, lf, optimizer, epochs, bands_name):
                 inpbar.update(1)
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
     
-    save_model_parameters(model, model_parameters_path)
+    save_model_parameters(model, model_parameters_path, model_parameters_name)
 
 
 
@@ -167,7 +169,7 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 3                                                          # fixed number of epochs
+    epochs = 1                                                          # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9]]
     subset_names = ['RGB', 'Atmosperic_Factors']
     pretrained_flag = 0
