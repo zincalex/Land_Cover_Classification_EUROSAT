@@ -65,6 +65,8 @@ class EuroSATDataset(Dataset) :
     def __getchannelesvalue__(self, bands_selected) :
         return self.transform(self.instances[:,:,bands_selected]), self.labels[:]
 
+#######Attenzione: da verificare l'uso di ConvTranspose2d e Conv2 in quanto dovrebbe essere inverso(Conv2d per diminuire il numero di Canali e ConvTranspose2d per aumentarli)
+# https://stackoverflow.com/questions/68976745/in-keras-what-is-the-difference-between-conv2dtranspose-and-conv2d qui fa riferimento a keras ma il discorso dovrebbe essere lo stesso, confermate???
 
 class EncoderDecoderCNN(nn.Module) :
     def __init__(self, in_channels, out_channels):
