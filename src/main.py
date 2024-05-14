@@ -1,5 +1,6 @@
 # TODO chiedere al prof quale sia migliore/convenzione tra patterns, instances, samples, etc....
 # TODO chiedere al prof perchè la prima run vada così lenta nel buildare il dataset
+# TODO come è possibile che nel paper hanno fatto analisi resnet su solo 2 bande o 4 bande
 # fixare if che controlla de nel dataset ci sono anche altri file o solo directory
 # dimensionality reduction, PCA
 
@@ -10,9 +11,11 @@
 
 # based 
 import os               # paths
+import tifffile  
+import argparse
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
-import tifffile  
+import torch.utils
 from tqdm import tqdm   # progress bar
 
 # torch
@@ -22,7 +25,13 @@ from torch.utils.data import Dataset
 from torchvision import transforms, datasets
 from torchvision.models import resnet50, ResNet50_Weights
 
+parser = argparse.ArgumentParser()
+#-t ANALYSIS TYPE
+parser.add_argument("-t", type = int, help="Analysis type", default = 0)
+args = parser.parse_args()
 
+
+ANALYSIS = args.t
 DEVICE = (
     "cuda" 
     if torch.cuda.is_available()
@@ -33,8 +42,6 @@ DEVICE = (
 torch.set_default_device(DEVICE)
 if torch.cuda.is_available():
     g_device = torch.Generator(device='cuda')
-if torch.backends.mps.is_available():
-    g_device = torch.Generator(device='mps')
 print(f"Using {DEVICE} device")
 
 
@@ -49,16 +56,44 @@ class EuroSATDataset(Dataset) :
         labels (list): list of labels
         transform (callable): transform to apply to the instances
     """
-    def __init__(self, instances, labels, transform):
-        self.labels = labels                                     # class
-        self.instances = instances                               # images
-        self.transform = transform                               # transforms
+    def __init__(self, instances, labels, transform, dataset = None, subset_bands = []):
+        
+        if subset_bands and dataset is not None :
 
-    def __len__(self):
+            '''
+            img_list, label_list = np.array([]),  np.array([])
+
+            with tqdm(total=len(dataset), unit='instance') as inpbar:      
+                for i in range(len(dataset)) :
+                    data = dataset.__getchanneles__(i, subset_bands)
+                    img_list = np.append(img_list, data[0])
+                    label_list = np.append(img_list, data[1])
+                    inpbar.update(1)
+            self.instances =  img_list
+            self.labels = label_list
+            self.transform = transform  
+            '''
+            self.instances =  img_list
+            self.labels = label_list
+            self.transform = transform  
+
+        else :
+            self.labels = labels                     # classes
+            self.instances = instances               # images
+            self.transform = transform               # transformations
+
+    def __len__(self) :
         return len(self.instances)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) :
         return self.transform(self.instances[idx]), self.labels[idx] 
+    
+    def __getitems(self) :
+        return self.instances, self.labels
+    
+    def __getchanneles__(self, idx, bands_selected) :
+        return self.transform(self.instances[idx][:,:,bands_selected]), self.labels[idx] 
+
 
 class EncoderDecoderCNN(nn.Module) :
     def __init__(self, in_channels, out_channels):
@@ -95,6 +130,51 @@ def load_tif_channels(img_path, bands_selected):
     return channels
 
 
+def load_data(img_path):
+    """
+    
+    """
+    img_np_array = tifffile.imread(img_path)
+    img_np_array = img_np_array.astype(np.float32)
+    return img_np_array
+
+def save_model(net, path):
+    """
+    
+    """
+    print("\nSaving model...")
+    if not os.path.exists('pretrained') :
+            os.makedirs('pretrained')
+    torch.save(net.state_dict(), path)
+    print(f'MODEL SAVED to {path}')
+
+
+
+
+def resnet50_training(model, train_data, lf, optimizer, epochs, model_name):
+    """
+
+    """
+    pretrained_model_path = f'../pretrained/{model_name}.pth'
+    for epoch in range(epochs):    
+        with tqdm(total=len(train_data), unit='instance') as inpbar:
+            for data in train_data:
+                images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
+
+                optimizer.zero_grad()
+                outputs = model(images)
+                loss = lf(outputs, labels)
+
+                # backward pass
+                loss.backward()
+                optimizer.step()
+                inpbar.update(1)
+        print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
+    
+    save_model(model, pretrained_model_path)
+
+
+
 
 
 def main () : 
@@ -107,9 +187,11 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 10                                                          # fixed number of epochs
-    #bands_selected = [0,1,2,3,4,5,6,7,8,9,10,11,12]                    # bands selected to analyze 4 3 2 is RGB 
-    bands_selected = [4,3,2]
+    epochs = 3                                                          # fixed number of epochs
+    #bands_selected = [0,1,2,3,4,5,6,7,8,9,10,11,12]                    # bands selected to analyze 3 2 1 is RGB 
+    bands_selected = [3,2,1]
+    subset_bands = [[3,2,1], [0, 8, 9]]
+    subset_names = ['RGB', 'Atmosperic_Factors']
     pretrained_flag = 0
 
     # DATASET
@@ -132,17 +214,14 @@ def main () :
             images = os.listdir(label_dir)
 
             m_training = int(len(images) * fraction_train)
-            m_test = int(len(images) * fraction_test)
             for i in range(m_training) : 
                 img_path = label_dir + '/' + images[i]
-                #train_instances.append(Image.open(img_path).convert('RGB'))
-                train_instances.append(load_tif_channels(img_path, bands_selected))
+                train_instances.append(load_data(img_path))
                 train_label.append(dict_class[label])
 
             for i in range(m_training, len(images)) :               # the remaining images are for the test set 
                 img_path = label_dir + '/' + images[i]
-                #test_instances.append(Image.open(img_path).convert('RGB'))
-                test_instances.append(load_tif_channels(img_path, bands_selected))
+                test_instances.append(load_data(img_path))
                 test_label.append(dict_class[label])
             pbar.update(1)
 
@@ -150,10 +229,10 @@ def main () :
     # Define transformations to apply to the images (e.g., resizing, normalization)
     transform = transforms.Compose([
         transforms.ToPILImage(),
-        transforms.Resize(256),                                                                 # Resize images to 256x256
-        transforms.CenterCrop(224),                                                             # Crop the images to our desired size
-        transforms.ToTensor(),                                                                  # Convert images to PyTorch tensors (standardization is automatically applied)
-        #transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])                        # Normalize images
+        transforms.Resize(256),       # Resize images to 256x256                                                          
+        transforms.CenterCrop(224),  # Crop the images to our desired size
+        transforms.ToTensor(),        # Convert images to PyTorch tensors (standardization is automatically applied)                                                                                                                                                                           
+        #transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225])                        # Normalize images
     ])
     
     train_dataset = EuroSATDataset(train_instances, train_label, transform)  
@@ -161,43 +240,37 @@ def main () :
     train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     print("DATASET CREATION COMPLETE")
+    
+    if (ANALYSIS == 1) : 
+        
+        for i, sub_bands in enumerate(subset_bands) :
+            model = resnet50(weights = None)
+            model.to(DEVICE)
+            
+            loss_funct = nn.CrossEntropyLoss()
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
-
-    # RESNET50 
-    model = resnet50(weights = ResNet50_Weights.DEFAULT)
-    model.to(DEVICE)
-    loss_funct = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+            print("Starting channel subsampling on dataset")
+            lesser_channel_training_dataset = EuroSATDataset([], [], transform = transform, dataset=train_dataset, subset_bands = sub_bands)
+            lesser_channel_train_data_loader = torch.utils.data.DataLoader(lesser_channel_training_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
+            print("Finished channel subsampling on dataset")
+            print(f"Starting Training resnet50 number {i} on {subset_names[i]}")
+            resnet50_training(model=model, train_data = lesser_channel_train_data_loader, lf=loss_funct, optimizer=optimizer, epochs=epochs, model_name=subset_names[i])
+    elif( ANALYSIS == 2) : 
+        print("sus")
+    elif( ANALYSIS == 3) :
+        print("sus")
+    else :
+        print("suca")
+        exit(1)
 
     
-    pretrained_model_path = '../pretrained/model_state.pth'
-    if(pretrained_flag == 0):
-        for epoch in range(epochs):
-            
-            with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
-                for i, data in enumerate(train_data_loader):
-                    images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
-
-                    optimizer.zero_grad()
-                    outputs = model(images)
-                    loss = loss_funct(outputs, labels)
-
-                    # backward pass
-                    loss.backward()
-                    optimizer.step()
-                    inpbar.update(1)
-            pbar.update(1)
-            print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
-
-        print("\nSaving model...")
-        if not os.path.exists('pretrained') :
-                os.makedirs('pretrained')
-        torch.save(model.state_dict(), pretrained_model_path)
-        print(f'MODEL SAVED to {pretrained_model_path}')
-
+    '''if(pretrained_flag == 0):
+        
     else:
         model.load_state_dict(torch.load(pretrained_model_path, map_location=DEVICE))
         print("Pretrained model has been loaded")
+    '''
 
     model.eval()
     total = 0
@@ -219,7 +292,6 @@ def main () :
 
     print(f'TESTING : DONE')
     print(F'Accuracy = {accuracy}')
-
 
                  
 
