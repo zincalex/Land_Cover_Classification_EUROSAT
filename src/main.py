@@ -59,8 +59,6 @@ class EuroSATDataset(Dataset) :
     def __init__(self, instances, labels, transform, dataset = None, subset_bands = []):
         
         if subset_bands and dataset is not None :
-
-            '''
             img_list, label_list = np.array([]),  np.array([])
 
             with tqdm(total=len(dataset), unit='instance') as inpbar:      
@@ -72,10 +70,7 @@ class EuroSATDataset(Dataset) :
             self.instances =  img_list
             self.labels = label_list
             self.transform = transform  
-            '''
-            self.instances =  img_list
-            self.labels = label_list
-            self.transform = transform  
+             
 
         else :
             self.labels = labels                     # classes
