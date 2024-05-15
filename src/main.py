@@ -164,7 +164,9 @@ def resnet50_validation(model, val_data):
     model.eval()
     print("\nVALIDATION: START")
     with tqdm(total=len(val_data), unit='instance') as valbar:
-        with torch.no_grad():    
+        with torch.no_grad():
+            total = 0
+            correct_predictions = 0    
             for i, val_data in enumerate(val_data):
                 images, labels = val_data[0].to(DEVICE), val_data[1].to(DEVICE)
                 outputs = model(images)
@@ -261,6 +263,7 @@ def main () :
         num_data = len(dataset_RGB)
         num_train = int(train_ratio*num_data)
         num_val = num_data-num_train
+        print("Splitting in validation subset...")
         train_dataset_RGB, val_dataset_RGB = random_split(dataset=dataset_RGB, lengths = [num_train, num_val], generator=g_device)
         train_dataset_atmosferic, val_dataset_atmosferic = random_split(dataset=dataset_atmosferic, lengths = [num_train, num_val], generator=g_device)
 
@@ -287,7 +290,7 @@ def main () :
             print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} bands")
             resnet50_training(model=model, train_data = dataloader_train_list[i], lf=loss_funct, optimizer=optimizer, epochs=epochs, bands_name=subset_names[i])
             model_list.append(model)
-            val_accuracy = resnet50_validation(model=model, test_data = dataloader_val_list[i])
+            val_accuracy = resnet50_validation(model=model, val_data = dataloader_val_list[i])
             val_accuracy_list.append(val_accuracy)
         total_val_accuracy = sum(val_accuracy_list)
         model_weights = [accuracy / total_val_accuracy for accuracy in val_accuracy_list]
@@ -296,6 +299,7 @@ def main () :
         # calculated weights, starting testing to get the predicted labels
         predictions = []
         final_predictions = torch.zeros_like(predictions[0])
+        correct_predictions = 0
 
         for model in model_list:
             model.eval()
