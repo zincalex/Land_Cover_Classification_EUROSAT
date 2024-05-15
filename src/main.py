@@ -22,7 +22,7 @@ from tqdm import tqdm   # progress bar
 # torch
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, random_split
 from torchvision import transforms, datasets
 from torchvision.models import resnet50, ResNet50_Weights
 
@@ -39,8 +39,7 @@ DEVICE = (
     else "cpu"
 )
 torch.set_default_device(DEVICE)
-if torch.cuda.is_available():
-    g_device = torch.Generator(device='cuda')
+g_device = torch.Generator(device=DEVICE)
 print(f"Using {DEVICE} device")
 
 
@@ -161,6 +160,27 @@ def resnet50_training(model, train_data, lf, optimizer, epochs, bands_name):
     
     save_model_parameters(model, model_parameters_path, model_parameters_name)
 
+def resnet50_validation(model, val_data):
+    model.eval()
+    print("\nVALIDATION: START")
+    with tqdm(total=len(val_data), unit='instance') as valbar:
+        with torch.no_grad():    
+            for i, val_data in enumerate(val_data):
+                images, labels = val_data[0].to(DEVICE), val_data[1].to(DEVICE)
+                outputs = model(images)
+
+                _,predicted = torch.max(outputs, 1) #max 1 probability, takes the max probability inside the final softmax layer (::TODO:: check resnet softmax)
+
+                total += labels.size(0)
+                correct_predictions += (predicted == labels).sum().item()
+                valbar.update(1)
+        
+    accuracy = correct_predictions/total 
+
+    print(f'TESTING : DONE')
+    print(F'Accuracy = {accuracy}')
+    return accuracy
+
 
 
 
@@ -203,8 +223,6 @@ def main () :
                 train_instances.append(load_data(img_path))
                 train_label.append(dict_class[label])
 
-            
-
             for i in range(m_training, len(images)) :               # Test set
                 img_path = label_dir + '/' + images[i]
                 test_instances.append(load_data(img_path))
@@ -221,8 +239,8 @@ def main () :
     
     # Main dataset, 13 channels
     train_dataset = EuroSATDataset(np.array(train_instances), train_label, transform)
-    #validation_dataset = EuroSATDataset  
-    test_dataset = EuroSATDataset(np.array(test_instances), test_label, transform)  
+    test_dataset = EuroSATDataset(np.array(test_instances), test_label, transform)
+  
 
     train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
@@ -234,15 +252,31 @@ def main () :
         print("Starting analysis: different resnet50s are trained on different band combinations; the outputs are weighted before producing an output")
 
         print("Creating dataset subsets...")
-        # Subdataset with lesser channels
-        train_dataset_RGB = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[0]], train_label, transform)
-        train_dataset_atmosferic = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[1]], train_label, transform)  
+        # Subdataset with lesser channels with 80% of data
+        dataset_RGB = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[0]], train_label, transform)
+        dataset_atmosferic = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[1]], train_label, transform)
+
+        train_ratio = 0.8
+        #numbers computed on dataset_RGB since they are the same but with different bands
+        num_data = len(dataset_RGB)
+        num_train = int(train_ratio*num_data)
+        num_val = num_data-num_train
+        train_dataset_RGB, val_dataset_RGB = random_split(dataset=dataset_RGB, lengths = [num_train, num_val])
+        train_dataset_atmosferic, val_dataset_atmosferic = random_split(dataset=dataset_atmosferic, lengths = [num_train, num_val])
 
 
         RGB_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_RGB, batch_size = batch_size, shuffle = True, generator = g_device)
         atmos_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_atmosferic, batch_size = batch_size, shuffle = True, generator = g_device)
+        RGB_channels_val_data_loader = torch.utils.data.DataLoader(val_dataset_RGB, batch_size = batch_size)
+        atmos_channels_val_data_loader = torch.utils.data.DataLoader(val_dataset_atmosferic, batch_size = batch_size)
+
+        dataloader_train_list = [RGB_channels_train_data_loader, RGB_channels_val_data_loader]
+        dataloader_val_list = [atmos_channels_train_data_loader, atmos_channels_val_data_loader]
+
         print("Complete")
         
+        model_list, val_accuracy_list = [], []
+
         for i, sub_bands in enumerate(subset_bands) :
             model = resnet50(weights = None)
             model.to(DEVICE)
@@ -251,7 +285,41 @@ def main () :
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
             print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} bands")
-            resnet50_training(model=model, train_data = RGB_channels_train_data_loader, lf=loss_funct, optimizer=optimizer, epochs=epochs, bands_name=subset_names[i])
+            resnet50_training(model=model, train_data = dataloader_train_list[i], lf=loss_funct, optimizer=optimizer, epochs=epochs, bands_name=subset_names[i])
+            model_list.append(model)
+            val_accuracy = resnet50_validation(model=model, test_data = dataloader_val_list[i])
+            val_accuracy_list.append(val_accuracy)
+        total_val_accuracy = sum(val_accuracy_list)
+        model_weights = [accuracy / total_val_accuracy for accuracy in val_accuracy_list]
+
+
+        # calculated weights, starting testing to get the predicted labels
+        predictions = []
+        final_predictions = torch.zeros_like(predictions[0])
+
+        for model in model_list:
+            model.eval()
+            with torch.no_grad():
+                model_predictions = []
+                for i, test_data in enumerate(test_data_loader):
+                    images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
+                    outputs = model(images)
+                    model_predictions.append(outputs)
+                predictions.append(torch.cat(model_predictions, dim=0))
+        
+        for predict, weight in zip(predictions, model_weights):
+            final_predictions += predict*weight
+
+        _, predicted_labels = torch.max(final_predictions, 1)
+        correct_predictions += (predicted_labels == labels).sum().item()
+        ensemble_acc = correct_predictions/len(train_label)
+
+        print(f'Ensemble Accuracy: {ensemble_acc:.4f}')
+
+
+        
+
+            
 
 
     elif( ANALYSIS == 2) : 
