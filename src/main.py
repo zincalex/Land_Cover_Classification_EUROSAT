@@ -261,8 +261,8 @@ def main () :
         num_data = len(dataset_RGB)
         num_train = int(train_ratio*num_data)
         num_val = num_data-num_train
-        train_dataset_RGB, val_dataset_RGB = random_split(dataset=dataset_RGB, lengths = [num_train, num_val])
-        train_dataset_atmosferic, val_dataset_atmosferic = random_split(dataset=dataset_atmosferic, lengths = [num_train, num_val])
+        train_dataset_RGB, val_dataset_RGB = random_split(dataset=dataset_RGB, lengths = [num_train, num_val], generator=g_device)
+        train_dataset_atmosferic, val_dataset_atmosferic = random_split(dataset=dataset_atmosferic, lengths = [num_train, num_val], generator=g_device)
 
 
         RGB_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_RGB, batch_size = batch_size, shuffle = True, generator = g_device)
