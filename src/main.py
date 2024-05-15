@@ -3,6 +3,10 @@
 # TODO come è possibile che nel paper hanno fatto analisi resnet su solo 2 bande o 4 bande
 # TODO introdurre possibile salvataggio del dataset 13 canali in file csv
 # dimensionality reduction, PCA
+# KEYWORD ensemble, slides pg367 (high chance of a 1-2% improving)
+# KEYWORD bagging and meta classifier, should be compatible with resnet. dataset must have the same size and can have same elements
+# finish looking at slide n373
+
 
 # All resnet50 pretrained models require 3 x 224 x 224 sizes
 
@@ -187,7 +191,7 @@ def main () :
         dict_class.update({labels[i] : i + 1})
 
     print("CREATING DATASET...")
-    train_instances, train_label, test_instances, test_label = [], [], [], []
+    train_instances, train_label, validation_instances, validation_labels, test_instances, test_label = [], [], [], [], [], []
     with tqdm(total=num_classes,  unit='label') as pbar:
         for label in os.listdir(dataset_path) :
             label_dir = os.path.join(dataset_path, label)
@@ -198,6 +202,8 @@ def main () :
                 img_path = label_dir + '/' + images[i]
                 train_instances.append(load_data(img_path))
                 train_label.append(dict_class[label])
+
+            
 
             for i in range(m_training, len(images)) :               # Test set
                 img_path = label_dir + '/' + images[i]
@@ -214,7 +220,8 @@ def main () :
     ])
     
     # Main dataset, 13 channels
-    train_dataset = EuroSATDataset(np.array(train_instances), train_label, transform)  
+    train_dataset = EuroSATDataset(np.array(train_instances), train_label, transform)
+    #validation_dataset = EuroSATDataset  
     test_dataset = EuroSATDataset(np.array(test_instances), test_label, transform)  
 
     train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
