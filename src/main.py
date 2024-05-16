@@ -273,8 +273,8 @@ def main () :
         RGB_channels_val_data_loader = torch.utils.data.DataLoader(val_dataset_RGB, batch_size = batch_size)
         atmos_channels_val_data_loader = torch.utils.data.DataLoader(val_dataset_atmosferic, batch_size = batch_size)
 
-        dataloader_train_list = [RGB_channels_train_data_loader, RGB_channels_val_data_loader]
-        dataloader_val_list = [atmos_channels_train_data_loader, atmos_channels_val_data_loader]
+        dataloader_train_list = [RGB_channels_train_data_loader, atmos_channels_train_data_loader]
+        dataloader_val_list = [RGB_channels_val_data_loader, atmos_channels_val_data_loader]
 
         print("Complete")
         
