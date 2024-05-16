@@ -102,12 +102,6 @@ class EncoderDecoderCNN(nn.Module) :
         x = self.decoder(x)
         return x
 
-def load_tif_channels(img_path, bands_selected):
-    file = tifffile.imread(img_path)
-    channels = file[..., bands_selected]
-    channels = channels.astype(np.float32)/65535.0
-    return channels
-
 
 def load_data(img_path):
     """Read the an image through the tifffile library and convert the values
@@ -139,17 +133,19 @@ def save_model_parameters(model, model_parameters_path, model_parameters_name):
     print(f'MODEL {model_parameters_name} SAVED to {model_parameters_path}')
 
 
+def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
+    """Train a model with the specified hyperparameters
 
-
-def resnet50_training(model, train_data, lf, optimizer, epochs, bands_name):
+    Args:
+        model:                      model to train
+        train_data_loader:          training EuroSATDataset (img, label)
+        lf:                         loss function
+        optimizer:                  optimizer used in the backward pass 
+        epochs:                     number of epochs for training
     """
-
-    """
-    model_parameters_path = '../parameters'
-    model_parameters_name = f'{bands_name}.pth'
     for epoch in range(epochs):    
-        with tqdm(total=len(train_data), unit='instance') as inpbar:
-            for data in train_data:
+        with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
+            for data in train_data_loader :
                 images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
 
                 optimizer.zero_grad()
@@ -160,11 +156,25 @@ def resnet50_training(model, train_data, lf, optimizer, epochs, bands_name):
                 optimizer.step()
                 inpbar.update(1)
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
+
+
+def resnet50_test(model, test_data_loader, lf) :
+    total = 0
+    correct_predictions = 0
+    with tqdm(total=len(test_data_loader), unit='instance') as testbar:
+        for test_data in test_data_loader :
+            images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
+            outputs = model(images)
+
+            _,predicted = torch.max(outputs, 1) #max 1 probability, takes the max probability inside the final softmax layer (::TODO:: check resnet softmax)
+
+            total += labels.size(0)
+            correct_predictions += (predicted == labels).sum().item()
+            testbar.update(1)
     
-    save_model_parameters(model, model_parameters_path, model_parameters_name)
+    return correct_predictions/total 
 
-
-
+    
 
 
 def main () : 
@@ -246,6 +256,7 @@ def main () :
         atmos_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_atmosferic, batch_size = batch_size, shuffle = True, generator = g_device)
         print("Complete")
         
+        model_parameters_path = '../parameters'
         for i, sub_bands in enumerate(subset_bands) :
             model = resnet50(weights = None)
             num_features = model.fc.in_features     # number of features in input in the last FC layer
@@ -255,16 +266,16 @@ def main () :
             loss_funct = nn.CrossEntropyLoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
+            model_parameters_name = f'{subset_names[i]}.pth'
             print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} bands")
-            resnet50_training(model=model, train_data = RGB_channels_train_data_loader, lf=loss_funct, optimizer=optimizer, epochs=epochs, bands_name=subset_names[i])
+            resnet50_training(model=model, train_data = RGB_channels_train_data_loader, lf=loss_funct, optimizer=optimizer, epochs=epochs)
+            save_model_parameters(model, model_parameters_path, model_parameters_name)
 
 
     elif(ANALYSIS == 2) : 
         print("Starting analysis: PCA layer is added before resnet50 for channel reduction from 13 to 3")
 
-        if not SKIP_PCA : 
-
-            # TODO DO NOT FORGET THE LABELS, WHICH ARE SAVED 
+        if not SKIP_PCA :  
             # Shape of train_instances (num_instances, 64, 64, 13) ----> (num_samples, 64*64, 13) 
             num_train_instances = len(train_instances)
             num_test_instances = len(test_instances)
@@ -306,12 +317,32 @@ def main () :
             print('Done')
         
         else : # PCA computation already done
-
-            print('Loading modified PCA dataset')
+            print('Loading modified PCA dataset...')
             with h5py.File('../PCA_dataset/imagesPCA.h5', 'r') as hf :
                 reconstructed_train_imgs= hf['train']['data'][:]
                 reconstructed_test_imgs = hf['test']['data'][:]
             print("Done")
+
+        # Start computation, on the channel reduced dataset through PCA
+        train_dataset_PCA = EuroSATDataset(reconstructed_train_imgs, train_label, transform)
+        test_dataset_PCA = EuroSATDataset(reconstructed_test_imgs, test_label, transform)  
+
+        train_data_loader = torch.utils.data.DataLoader(train_dataset_PCA, batch_size = batch_size, shuffle = True, generator = g_device)
+        test_data_loader = torch.utils.data.DataLoader(test_dataset_PCA, batch_size = batch_size, shuffle = True, generator = g_device)
+        print("\nTraining: start")    
+        model = resnet50(weights = ResNet50_Weights.DEFAULT)
+        #num_features = model.fc.in_features     # number of features in input in the last FC layer
+        #model.fc = torch.nn.Linear(num_features, num_classes)
+        model.to(DEVICE)
+        
+        loss_funct = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)  
+        resnet50_training(model, train_data_loader, loss_funct, optimizer, epochs)
+
+        model.eval()
+        print("\nTesting: start")
+        accuracy = resnet50_test(model, test_data_loader, loss_funct)
+        print(F'Accuracy = {accuracy}')
 
     elif( ANALYSIS == 3) :
         print("Starting analysis: encoder-decoder structure for channel reduction on the dataset. Resnet50 is then trained")
@@ -327,26 +358,7 @@ def main () :
         print("Pretrained model has been loaded")
     '''
     """ 
-    model.eval()
-    total = 0
-    correct_predictions = 0
-
-    print("\nTESTING: START")
-    with tqdm(total=len(test_data_loader), unit='instance') as testbar:
-        for i, test_data in enumerate(test_data_loader):
-            images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
-            outputs = model(images)
-
-            _,predicted = torch.max(outputs, 1) #max 1 probability, takes the max probability inside the final softmax layer (::TODO:: check resnet softmax)
-
-            total += labels.size(0)
-            correct_predictions += (predicted == labels).sum().item()
-            testbar.update(1)
     
-    accuracy = correct_predictions/total 
-
-    print(f'TESTING : DONE')
-    print(F'Accuracy = {accuracy}')
     """
                  
 
