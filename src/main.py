@@ -17,6 +17,7 @@ import argparse
 import numpy as np      # arrays 
 import matplotlib.pyplot as plt 
 import torch.utils
+import h5py             # compression of large dataset and upload
 from tqdm import tqdm   # progress bar
 
 # torch
@@ -26,12 +27,15 @@ from torch.utils.data import Dataset
 from torchvision import transforms, datasets
 from torchvision.models import resnet50, ResNet50_Weights
 
+# sklearn
+from sklearn.decomposition import PCA
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-t", type = int, help="Analysis type", default = 0)
 args = parser.parse_args()
 
+SKIP_PCA = True
 ANALYSIS = args.t
 DEVICE = (
     "cuda" if torch.cuda.is_available()
@@ -97,8 +101,6 @@ class EncoderDecoderCNN(nn.Module) :
         x = self.encoder(x)
         x = self.decoder(x)
         return x
-
-
 
 def load_tif_channels(img_path, bands_selected):
     file = tifffile.imread(img_path)
@@ -192,7 +194,7 @@ def main () :
 
     print("CREATING DATASET...")
     train_instances, train_label, validation_instances, validation_labels, test_instances, test_label = [], [], [], [], [], []
-    with tqdm(total=num_classes,  unit='label') as pbar:
+    with tqdm(total=num_classes,  unit='class') as pbar:
         for label in os.listdir(dataset_path) :
             label_dir = os.path.join(dataset_path, label)
             images = os.listdir(label_dir)
@@ -202,8 +204,6 @@ def main () :
                 img_path = label_dir + '/' + images[i]
                 train_instances.append(load_data(img_path))
                 train_label.append(dict_class[label])
-
-            
 
             for i in range(m_training, len(images)) :               # Test set
                 img_path = label_dir + '/' + images[i]
@@ -219,10 +219,13 @@ def main () :
         #transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225])                        # Normalize images
     ])
     
+    train_instances = np.array(train_instances)
+    test_instances = np.array(test_instances)
+
     # Main dataset, 13 channels
-    train_dataset = EuroSATDataset(np.array(train_instances), train_label, transform)
+    train_dataset = EuroSATDataset(train_instances, train_label, transform)
     #validation_dataset = EuroSATDataset  
-    test_dataset = EuroSATDataset(np.array(test_instances), test_label, transform)  
+    test_dataset = EuroSATDataset(test_instances, test_label, transform)  
 
     train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
@@ -245,6 +248,8 @@ def main () :
         
         for i, sub_bands in enumerate(subset_bands) :
             model = resnet50(weights = None)
+            num_features = model.fc.in_features     # number of features in input in the last FC layer
+            model.fc = torch.nn.Linear(num_features, num_classes)
             model.to(DEVICE)
             
             loss_funct = nn.CrossEntropyLoss()
@@ -254,8 +259,60 @@ def main () :
             resnet50_training(model=model, train_data = RGB_channels_train_data_loader, lf=loss_funct, optimizer=optimizer, epochs=epochs, bands_name=subset_names[i])
 
 
-    elif( ANALYSIS == 2) : 
-        print("Starting analysis: layers are added before resnet50 for channel reduction from 13 to 3")
+    elif(ANALYSIS == 2) : 
+        print("Starting analysis: PCA layer is added before resnet50 for channel reduction from 13 to 3")
+
+        if not SKIP_PCA : 
+
+            # TODO DO NOT FORGET THE LABELS, WHICH ARE SAVED 
+            # Shape of train_instances (num_instances, 64, 64, 13) ----> (num_samples, 64*64, 13) 
+            num_train_instances = len(train_instances)
+            num_test_instances = len(test_instances)
+
+            flattened_train_instances = train_instances.reshape(num_train_instances, -1, 13)
+            flattened_test_instances = test_instances.reshape(num_test_instances, -1, 13)
+
+            pca = PCA(n_components = 3)
+            transformed_train_imgs = []
+            transformed_test_imgs = []
+            
+            print("PCA transformation")
+            with tqdm(total=(num_train_instances + num_test_instances), unit='img') as pbar:
+                for img in flattened_train_instances : 
+                    transformed_train_imgs.append(pca.fit_transform(img))
+                    pbar.update(1)
+                
+                for img in flattened_test_instances : 
+                    transformed_test_imgs.append(pca.fit_transform(img))
+                    pbar.update(1)
+
+            transformed_train_imgs = np.array(transformed_train_imgs)
+            reconstructed_train_imgs = transformed_train_imgs.reshape(num_train_instances, 64, 64, 3)
+
+            transformed_test_imgs = np.array(transformed_test_imgs)
+            reconstructed_test_imgs = transformed_test_imgs.reshape(num_test_instances, 64, 64, 3)
+
+            print('Saving modified dataset...')
+            if not os.path.exists('../PCA_dataset') :
+                os.makedirs('../PCA_dataset')
+            with h5py.File('../PCA_dataset/imagesPCA.h5', 'w') as hf:      # Creation of .h5 file ----> compression lossless
+                # Create a group for train data
+                train_group = hf.create_group('train')
+                train_group.create_dataset('data', data = reconstructed_train_imgs)
+
+                # Create a group for test data
+                test_group = hf.create_group('test')
+                test_group.create_dataset('data', data = reconstructed_test_imgs)
+            print('Done')
+        
+        else : # PCA computation already done
+
+            print('Loading modified PCA dataset')
+            with h5py.File('../PCA_dataset/imagesPCA.h5', 'r') as hf :
+                reconstructed_train_imgs= hf['train']['data'][:]
+                reconstructed_test_imgs = hf['test']['data'][:]
+            print("Done")
+
     elif( ANALYSIS == 3) :
         print("Starting analysis: encoder-decoder structure for channel reduction on the dataset. Resnet50 is then trained")
     else :
@@ -269,7 +326,7 @@ def main () :
         model.load_state_dict(torch.load(pretrained_model_path, map_location=DEVICE))
         print("Pretrained model has been loaded")
     '''
-
+    """ 
     model.eval()
     total = 0
     correct_predictions = 0
@@ -290,7 +347,7 @@ def main () :
 
     print(f'TESTING : DONE')
     print(F'Accuracy = {accuracy}')
-
+    """
                  
 
 def taskb ():

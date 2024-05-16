@@ -1,3 +1,4 @@
 /dataset
-GDAL-3.4.3-cp311-cp311-win_amd64.whl
 .DS_Store
+/PCA_dataset
+/parameters
