@@ -137,6 +137,24 @@ def save_model_parameters(model, model_parameters_path, model_parameters_name):
     print(f'MODEL {model_parameters_name} SAVED to {model_parameters_path}')
 
 
+def calculate_mean_std(train_instances, test_instances, bands) :
+    """Calculate per each band the mean and the standard deviation
+
+    Args:
+        train_instances:    np.array filled with images used for training                  
+        test_instances:     np.array filled with images used for testing
+        bands:              number of channels of the images, which have shapes (64x64xbands)     
+    """
+    mean = np.zeros(bands)
+    std = np.zeros(bands)
+    dataset = np.concatenate((train_instances, test_instances), axis=0)
+    for i in range(bands) :
+        mean[i] = np.mean(dataset[:,:,:,i])
+        std[i] = np.std(dataset[:,:,:,i])
+
+    return mean.tolist(), std.tolist()
+
+
 def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
     """Train a model with the specified hyperparameters
 
@@ -174,7 +192,6 @@ def resnet50_test(model, test_data_loader, lf) :
             
             probabilities = nn.functional.softmax(outputs, dim=1)    # Softmax layer
             _,predicted = torch.max(probabilities, 1) 
-
             predictions.extend(predicted.cpu().numpy())
             correct_labels.extend(labels.cpu().numpy())
 
@@ -208,9 +225,9 @@ def main () :
     fraction_train = 0.8                                                # training split
     fraction_test = 1 - fraction_train                                  # test split
     batch_size = 32                                                     # batch size
-    lr = 1e-4                                                           # learning rate
+    lr = 1e-4                                                          # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 5                                                         # fixed number of epochs
+    epochs = 1                                                         # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9]]
     subset_names = ['RGB', 'Atmosperic_Factors']
     pretrained_flag = 0
@@ -244,16 +261,17 @@ def main () :
                 test_label.append(dict_class[label])
             pbar.update(1)
 
+    train_instances = np.array(train_instances)
+    test_instances = np.array(test_instances)
+    mean, std = calculate_mean_std(train_instances, test_instances, bands) 
     transform = transforms.Compose([        # Define transformations to apply to the images (e.g., resizing, normalization)
         transforms.ToPILImage(),
         transforms.Resize(256),             # Resize images to 256x256                                                          
         transforms.CenterCrop(224),         # Crop the images 224x224, required by resnet50
         transforms.ToTensor(),              # Convert images to PyTorch tensors (standardization automatically applied)                                                                                                                                                                           
-        #transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225])                        # Normalize images
+        transforms.Normalize(mean = mean, std = std)                        # Normalize images
     ])
     
-    train_instances = np.array(train_instances)
-    test_instances = np.array(test_instances)
 
     # Main dataset, 13 channels
     train_dataset = EuroSATDataset(train_instances, train_label, transform)
@@ -338,7 +356,7 @@ def main () :
                 test_group = hf.create_group('test')
                 test_group.create_dataset('data', data = reconstructed_test_imgs)
             print('Done')
-        
+
         else : # PCA computation already done
             print('Loading modified PCA dataset...')
             with h5py.File('../PCA_dataset/imagesPCA.h5', 'r') as hf :
@@ -346,16 +364,25 @@ def main () :
                 reconstructed_test_imgs = hf['test']['data'][:]
             print("Done")
 
+        mean, std = calculate_mean_std(reconstructed_train_imgs, reconstructed_test_imgs, bands = 3) 
+        transform = transforms.Compose([                            # Define transformations to apply to the images (e.g., resizing, normalization)
+            transforms.ToPILImage(),
+            transforms.Resize(256),                                 # Resize images to 256x256                                                          
+            transforms.CenterCrop(224),                             # Crop the images 224x224, required by resnet50
+            transforms.ToTensor(),                                  # Convert images to PyTorch tensors (standardization automatically applied)                                                                                                                                                                           
+            transforms.Normalize(mean = mean, std = std)            # Normalize images
+        ])
+
         # Start computation, on the channel reduced dataset through PCA
         train_dataset_PCA = EuroSATDataset(reconstructed_train_imgs, train_label, transform)
-        test_dataset_PCA = EuroSATDataset(reconstructed_test_imgs, test_label, transform)  
+        test_dataset_PCA = EuroSATDataset(reconstructed_test_imgs, test_label, transform) 
 
         train_data_loader = torch.utils.data.DataLoader(train_dataset_PCA, batch_size = batch_size, shuffle = True, generator = g_device)
         test_data_loader = torch.utils.data.DataLoader(test_dataset_PCA, batch_size = batch_size, shuffle = True, generator = g_device)
 
 
         print("\nTraining: start")    
-        model = resnet50(weights = ResNet50_Weights.DEFAULT)
+        model = resnet50(weights = ResNet50_Weights.DEFAULT)    
         num_features = model.fc.in_features     # number of features in input in the last FC layer
         model.fc = torch.nn.Linear(num_features, num_classes)
         model.to(DEVICE)
