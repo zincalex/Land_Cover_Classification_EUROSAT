@@ -29,6 +29,7 @@ from torchvision.models import resnet50, ResNet50_Weights
 
 # sklearn
 from sklearn.decomposition import PCA
+from sklearn import metrics
 
 
 parser = argparse.ArgumentParser()
@@ -69,6 +70,9 @@ class EuroSATDataset(Dataset) :
     
     def __getitem__(self, idx) :
         return self.transform(self.instances[idx]), self.labels[idx] 
+    
+    def __getlabels__(self) : 
+        return self.labels
 
     def __getchannelesvalue__(self, bands_selected) :
         return self.transform(self.instances[:,:,bands_selected]), self.labels[:]
@@ -161,20 +165,39 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
 def resnet50_test(model, test_data_loader, lf) :
     total = 0
     correct_predictions = 0
+    predictions = []
+    correct_labels = []
     with tqdm(total=len(test_data_loader), unit='instance') as testbar:
         for test_data in test_data_loader :
             images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
             outputs = model(images)
+            
+            probabilities = nn.functional.softmax(outputs, dim=1)    # Softmax layer
+            _,predicted = torch.max(probabilities, 1) 
 
-            _,predicted = torch.max(outputs, 1) #max 1 probability, takes the max probability inside the final softmax layer (::TODO:: check resnet softmax)
+            predictions.extend(predicted.cpu().numpy())
+            correct_labels.extend(labels.cpu().numpy())
 
             total += labels.size(0)
             correct_predictions += (predicted == labels).sum().item()
             testbar.update(1)
     
-    return correct_predictions/total 
+    accuracy = correct_predictions/total
+    return accuracy, predictions, correct_labels
 
-    
+
+def show_confusion_matrix(correct_labels, predictions, title = "Confusion Matrix") : 
+    disp = metrics.ConfusionMatrixDisplay.from_predictions(correct_labels, predictions)
+    disp.figure_.suptitle(title)
+    print(f"Confusion matrix: \n{disp.confusion_matrix}")
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
 
 
 def main () : 
@@ -187,7 +210,7 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 1                                                          # fixed number of epochs
+    epochs = 5                                                         # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9]]
     subset_names = ['RGB', 'Atmosperic_Factors']
     pretrained_flag = 0
@@ -200,7 +223,7 @@ def main () :
 
     dict_class = {}
     for i in range(len(labels)) : 
-        dict_class.update({labels[i] : i + 1})
+        dict_class.update({labels[i] : i})
 
     print("CREATING DATASET...")
     train_instances, train_label, validation_instances, validation_labels, test_instances, test_label = [], [], [], [], [], []
@@ -329,10 +352,12 @@ def main () :
 
         train_data_loader = torch.utils.data.DataLoader(train_dataset_PCA, batch_size = batch_size, shuffle = True, generator = g_device)
         test_data_loader = torch.utils.data.DataLoader(test_dataset_PCA, batch_size = batch_size, shuffle = True, generator = g_device)
+
+
         print("\nTraining: start")    
         model = resnet50(weights = ResNet50_Weights.DEFAULT)
-        #num_features = model.fc.in_features     # number of features in input in the last FC layer
-        #model.fc = torch.nn.Linear(num_features, num_classes)
+        num_features = model.fc.in_features     # number of features in input in the last FC layer
+        model.fc = torch.nn.Linear(num_features, num_classes)
         model.to(DEVICE)
         
         loss_funct = nn.CrossEntropyLoss()
@@ -341,8 +366,11 @@ def main () :
 
         model.eval()
         print("\nTesting: start")
-        accuracy = resnet50_test(model, test_data_loader, loss_funct)
+        accuracy, predictions, correct_labels = resnet50_test(model, test_data_loader, loss_funct)
         print(F'Accuracy = {accuracy}')
+        show_confusion_matrix(correct_labels, predictions)
+
+
 
     elif( ANALYSIS == 3) :
         print("Starting analysis: encoder-decoder structure for channel reduction on the dataset. Resnet50 is then trained")
