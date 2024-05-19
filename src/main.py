@@ -179,9 +179,65 @@ def resnet50_validation(model, val_data):
         
     accuracy = correct_predictions/total 
 
-    print(f'TESTING : DONE')
+    print(f'VALIDATION : DONE')
     print(F'Accuracy = {accuracy}')
     return accuracy
+
+
+def resnet50_majority_voting_labels(model_list, model_weights, test_loader_list, device):
+    predictions = []
+    for test_loader, model, weight in zip(test_loader_list, model_list, model_weights):
+        ensemble_preds = []
+
+        for images, _ in test_loader:
+            images = images.to(device)
+
+            model.eval()
+            model.to(device)
+
+            with torch.no_grad():
+                outputs = model(images)
+                probabilities = nn.functional.softmax(outputs, dim=1)
+                classes = torch.argmax(probabilities, dim=1)
+
+            ensemble_preds.append(classes*weight)
+        
+    final_predictions = torch.sum(torch.stack(ensemble_preds), dim=0)
+    vote = torch.argmax(final_predictions)
+    predictions.append(vote.item())
+    print(predictions)
+    return predictions
+        
+def resnet50_majority_voting_accuracy(model_list, model_weights, test_loader_list, device):
+    accuracies=[]
+
+    for i, model in enumerate(model_list):
+        correct = 0
+        total = 0
+
+        model.to(device)
+        model.eval()
+        
+        with torch.no_grad():
+            for data in test_loader_list[i]:
+                images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
+                outputs = model(images)
+
+                _, predicted = torch.max(outputs, 1)
+                total += labels.size(0)
+                correct += (predicted==labels).sum().item()
+            
+        model_accuracy = correct/total
+        print(f'Accuracy for model {i+1}: {model_accuracy}')
+        accuracies.append(model_accuracy)
+    
+    if np.sum(model_weights) != 1:
+        print("Normalizing weight sum...")
+        model_weights = model_weights / np.sum(model_weights)
+
+    weighted_average = np.average(accuracies, weights=model_weights)
+
+    return weighted_average
 
 
 
@@ -213,7 +269,7 @@ def main () :
         dict_class.update({labels[i] : i + 1})
 
     print("CREATING DATASET...")
-    train_instances, train_label, validation_instances, validation_labels, test_instances, test_label = [], [], [], [], [], []
+    train_instances, train_label, test_instances, test_label = [], [], [], []
     with tqdm(total=num_classes,  unit='label') as pbar:
         for label in os.listdir(dataset_path) :
             label_dir = os.path.join(dataset_path, label)
@@ -252,29 +308,35 @@ def main () :
 
     if (ANALYSIS == 1) : 
         print("Starting analysis: different resnet50s are trained on different band combinations; the outputs are weighted before producing an output")
-
+        
         print("Creating dataset subsets...")
         # Subdataset with lesser channels with 80% of data
-        dataset_RGB = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[0]], train_label, transform)
-        dataset_atmosferic = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[1]], train_label, transform)
+        dataset_RGB_train = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[0]], train_label, transform)
+        dataset_atmosferic_train = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[1]], train_label, transform)
+
+        dataset_RGB_test = EuroSATDataset(np.array(test_instances)[:,:,:,subset_bands[0]], test_label, transform)
+        dataset_atmosferic_test = EuroSATDataset(np.array(test_instances)[:,:,:,subset_bands[1]], test_label, transform)
 
         train_ratio = 0.8
         #numbers computed on dataset_RGB since they are the same but with different bands
-        num_data = len(dataset_RGB)
+        num_data = len(dataset_RGB_train)
         num_train = int(train_ratio*num_data)
         num_val = num_data-num_train
         print("Splitting in validation subset...")
-        train_dataset_RGB, val_dataset_RGB = random_split(dataset=dataset_RGB, lengths = [num_train, num_val], generator=g_device)
-        train_dataset_atmosferic, val_dataset_atmosferic = random_split(dataset=dataset_atmosferic, lengths = [num_train, num_val], generator=g_device)
+        train_dataset_RGB, val_dataset_RGB = random_split(dataset=dataset_RGB_train, lengths = [num_train, num_val], generator=g_device)
+        train_dataset_atmosferic, val_dataset_atmosferic = random_split(dataset=dataset_atmosferic_train, lengths = [num_train, num_val], generator=g_device)
 
 
         RGB_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_RGB, batch_size = batch_size, shuffle = True, generator = g_device)
         atmos_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_atmosferic, batch_size = batch_size, shuffle = True, generator = g_device)
         RGB_channels_val_data_loader = torch.utils.data.DataLoader(val_dataset_RGB, batch_size = batch_size)
         atmos_channels_val_data_loader = torch.utils.data.DataLoader(val_dataset_atmosferic, batch_size = batch_size)
+        RGB_channels_test_data_loader = torch.utils.data.DataLoader(dataset_RGB_test, batch_size = batch_size, drop_last=True)
+        atmos_channels_test_data_loader = torch.utils.data.DataLoader(dataset_atmosferic_test, batch_size = batch_size, drop_last = True)
 
         dataloader_train_list = [RGB_channels_train_data_loader, atmos_channels_train_data_loader]
         dataloader_val_list = [RGB_channels_val_data_loader, atmos_channels_val_data_loader]
+        dataloader_test_list = [RGB_channels_test_data_loader, atmos_channels_test_data_loader]
 
         print("Complete")
         
@@ -290,6 +352,7 @@ def main () :
             print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} bands")
             resnet50_training(model=model, train_data = dataloader_train_list[i], lf=loss_funct, optimizer=optimizer, epochs=epochs, bands_name=subset_names[i])
             model_list.append(model)
+            print(f"Starting Validation on resnet50 number {i+1} on {subset_names[i]} bands")
             val_accuracy = resnet50_validation(model=model, val_data = dataloader_val_list[i])
             val_accuracy_list.append(val_accuracy)
         total_val_accuracy = sum(val_accuracy_list)
@@ -297,26 +360,11 @@ def main () :
 
 
         # calculated weights, starting testing to get the predicted labels
-        predictions = []
-        final_predictions = torch.zeros_like(predictions[0])
-        correct_predictions = 0
-
-        for model in model_list:
-            model.eval()
-            with torch.no_grad():
-                model_predictions = []
-                for i, test_data in enumerate(test_data_loader):
-                    images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
-                    outputs = model(images)
-                    model_predictions.append(outputs)
-                predictions.append(torch.cat(model_predictions, dim=0))
+        print("Starting testing")
         
-        for predict, weight in zip(predictions, model_weights):
-            final_predictions += predict*weight
+        test_label_prediction = resnet50_majority_voting_labels(model_list=model_list, model_weights=model_weights, test_loader_list=dataloader_test_list, device=DEVICE)
 
-        _, predicted_labels = torch.max(final_predictions, 1)
-        correct_predictions += (predicted_labels == labels).sum().item()
-        ensemble_acc = correct_predictions/len(train_label)
+        ensemble_acc = resnet50_majority_voting_accuracy(model_list, model_weights, test_loader_list=dataloader_test_list, device = DEVICE)        
 
         print(f'Ensemble Accuracy: {ensemble_acc:.4f}')
 
@@ -340,7 +388,7 @@ def main () :
     else:
         model.load_state_dict(torch.load(pretrained_model_path, map_location=DEVICE))
         print("Pretrained model has been loaded")
-    '''
+    
 
     model.eval()
     total = 0
@@ -362,7 +410,7 @@ def main () :
 
     print(f'TESTING : DONE')
     print(F'Accuracy = {accuracy}')
-
+'''
                  
 
 def taskb ():
