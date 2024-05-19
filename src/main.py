@@ -1,14 +1,12 @@
-# TODO chiedere al prof quale sia migliore/convenzione tra patterns, instances, samples, etc....
-# TODO chiedere al prof perchè la prima run vada così lenta nel buildare il dataset
-# TODO come è possibile che nel paper hanno fatto analisi resnet su solo 2 bande o 4 bande
-# TODO introdurre possibile salvataggio del dataset 13 canali in file csv
+# TODO rendere la parte di building del dataset opzionale
+# TODO showare la confusion matrxi per task 1
+# TODO togliere il wall of text di dataset ma metterli dentro il for
+# TODO cercare di risolvere il problema del transform con la normalizzazione
 # dimensionality reduction, PCA
 # KEYWORD ensemble, slides pg367 (high chance of a 1-2% improving)
 # KEYWORD bagging and meta classifier, should be compatible with resnet. dataset must have the same size and can have same elements
 # finish looking at slide n373
 
-
-# All resnet50 pretrained models require 3 x 224 x 224 sizes
 
 # based 
 import os               # paths
@@ -23,7 +21,7 @@ from tqdm import tqdm   # progress bar
 # torch
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, random_split
 from torchvision import transforms, datasets
 from torchvision.models import resnet50, ResNet50_Weights
 
@@ -36,6 +34,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-t", type = int, help="Analysis type", default = 0)
 args = parser.parse_args()
 
+SKIP_DATASET_CREATION = True
 SKIP_PCA = True
 ANALYSIS = args.t
 DEVICE = (
@@ -69,7 +68,7 @@ class EuroSATDataset(Dataset) :
         return len(self.instances)
     
     def __getitem__(self, idx) :
-        return self.transform(self.instances[idx]), self.labels[idx] 
+        return self.transform(self.instances[idx]), torch.tensor(self.labels[idx] , dtype=torch.long)
     
     def __getlabels__(self) : 
         return self.labels
@@ -77,37 +76,8 @@ class EuroSATDataset(Dataset) :
     def __getchannelesvalue__(self, bands_selected) :
         return self.transform(self.instances[:,:,bands_selected]), self.labels[:]
 
-#######Attenzione: da verificare l'uso di ConvTranspose2d e Conv2 in quanto dovrebbe essere inverso(Conv2d per diminuire il numero di Canali e ConvTranspose2d per aumentarli)
-# https://stackoverflow.com/questions/68976745/in-keras-what-is-the-difference-between-conv2dtranspose-and-conv2d qui fa riferimento a keras ma il discorso dovrebbe essere lo stesso, confermate???
 
-class EncoderDecoderCNN(nn.Module) :
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-
-        self.encoder = nn.Sequential(
-            nn.Conv2d(13, 32, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.ReLU()
-        )
-        self.decoder = nn.Sequential (
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
-        return x
-
-
-def load_data(img_path):
+def load_img(img_path):
     """Read the an image through the tifffile library and convert the values
        of the image from uint16 to float32 
 
@@ -122,6 +92,42 @@ def load_data(img_path):
     return img_np_array.astype(np.float32)
 
 
+def save_to_hdf5(train_instances, test_instances, directory_name, file_name, train_label = None, test_label = None) :
+    if not os.path.exists(f'../{directory_name}') :
+        os.makedirs(f'../{directory_name}')
+
+    with h5py.File(f'../{directory_name}/{file_name}', 'w') as hf:      # Creation of .h5 file ----> compression lossless
+        # Create a group for train data
+        train_group = hf.create_group('train')
+        train_group.create_dataset('data', data = train_instances)
+        if train_label != None :
+            train_group.create_dataset('labels', data=train_label)  
+
+        # Create a group for test data
+        test_group = hf.create_group('test')
+        test_group.create_dataset('data', data = test_instances)
+        if test_label != None :
+            test_group.create_dataset('labels', data=test_label) 
+
+
+def load_hdf5_PCA(file_path) : 
+    with h5py.File(f'{file_path}', 'r') as hf :
+            train_instances = hf['train']['data'][:]
+            test_instances = hf['test']['data'][:]
+
+    return train_instances, test_instances
+
+
+def load_hdf5_EUROSAT(file_path) : 
+    with h5py.File(f'{file_path}', 'r') as hf :
+            train_instances = hf['train']['data'][:]
+            train_labels = hf['train']['labels'][:]
+            test_instances = hf['test']['data'][:]
+            test_labels = hf['test']['labels'][:]
+
+    return train_instances, train_labels, test_instances, test_labels
+
+
 def save_model_parameters(model, model_parameters_path, model_parameters_name):
     """Save the parameters of the model inside the specified path in a .pth file
 
@@ -132,7 +138,6 @@ def save_model_parameters(model, model_parameters_path, model_parameters_name):
     print("\nSaving model...")
     if not os.path.exists(model_parameters_path) :
         os.makedirs(model_parameters_path)
-        print("sgrodo")
     torch.save(model.state_dict(), model_parameters_path + '/' + model_parameters_name)
     print(f'MODEL {model_parameters_name} SAVED to {model_parameters_path}')
 
@@ -153,6 +158,32 @@ def calculate_mean_std(train_instances, test_instances, bands) :
         std[i] = np.std(dataset[:,:,:,i])
 
     return mean.tolist(), std.tolist()
+
+
+def create_EuroSATDatasets(instances, labels, subset_bands, transform) :
+    datasets = []
+    for bands in subset_bands:
+        dataset = EuroSATDataset(instances[:, :, :, bands], labels, transform)
+        datasets.append(dataset)
+    return datasets
+
+
+def train_val_split_datasets(train_datasets, fraction_train, generator) : 
+    split_datasets = []
+    for dataset in train_datasets:
+        num_data = len(dataset)
+        num_train = int(fraction_train * num_data)
+        num_val = num_data - num_train
+        train_dataset, val_dataset =  torch.utils.data.random_split(dataset, lengths=[num_train, num_val], generator=generator)
+        split_datasets.append((train_dataset, val_dataset))
+    return split_datasets
+
+
+def create_data_loaders(train_datasets, val_datasets, test_datasets, batch_size, generator):
+    train_loaders = [torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=generator) for dataset in train_datasets]
+    val_loaders = [torch.utils.data.DataLoader(dataset, batch_size=batch_size) for dataset in val_datasets]
+    test_loaders = [torch.utils.data.DataLoader(dataset, batch_size=batch_size, drop_last=True) for dataset in test_datasets]
+    return train_loaders, val_loaders, test_loaders
 
 
 def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
@@ -180,27 +211,60 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
 
 
-def resnet50_test(model, test_data_loader, lf) :
+def resnet50_test(model, data_loader) :
     total = 0
     correct_predictions = 0
     predictions = []
-    correct_labels = []
-    with tqdm(total=len(test_data_loader), unit='instance') as testbar:
-        for test_data in test_data_loader :
+    true_labels = []
+    with tqdm(total=len(data_loader), unit='instance') as testbar:
+        for test_data in data_loader :
             images, labels = test_data[0].to(DEVICE), test_data[1].to(DEVICE)
-            outputs = model(images)
             
-            probabilities = nn.functional.softmax(outputs, dim=1)    # Softmax layer
-            _,predicted = torch.max(probabilities, 1) 
+            with torch.no_grad() :
+                outputs = model(images)
+                probabilities = nn.functional.softmax(outputs, dim=1)    # Softmax layer
+                predicted = torch.argmax(probabilities, 1) 
+
             predictions.extend(predicted.cpu().numpy())
-            correct_labels.extend(labels.cpu().numpy())
+            true_labels.extend(labels.cpu().numpy())
 
             total += labels.size(0)
             correct_predictions += (predicted == labels).sum().item()
             testbar.update(1)
     
-    accuracy = correct_predictions/total
-    return accuracy, predictions, correct_labels
+    accuracy = correct_predictions / total
+    return accuracy, np.array(predictions), np.array(true_labels)
+
+
+def to_one_hot(predictions, num_classes) :
+    predictions_tensor = torch.tensor(predictions, dtype=torch.long)
+    one_hot = nn.functional.one_hot(predictions_tensor, num_classes=num_classes)
+    return one_hot.cpu().numpy()
+
+
+def resnet50_majority_voting_labels(model_list, model_weights, test_loader_list):
+    predictions = []
+    for test_loader, model, weight in zip(test_loader_list, model_list, model_weights):
+        ensemble_preds = []
+
+        for images, _ in test_loader:
+            images = images.to(DEVICE)
+
+            model.eval()
+            model.to(DEVICE)
+
+            with torch.no_grad():
+                outputs = model(images)
+                probabilities = nn.functional.softmax(outputs, dim=1)
+                predicted_label = torch.argmax(probabilities, dim=1)
+
+            ensemble_preds.append(predicted_label*weight) 
+    
+    final_predictions = torch.sum(torch.stack(ensemble_preds), dim=0)
+    vote = torch.argmax(final_predictions)
+    predictions.append(vote.item())
+    print(len(predictions))
+    return predictions
 
 
 def show_confusion_matrix(correct_labels, predictions, title = "Confusion Matrix") : 
@@ -209,6 +273,14 @@ def show_confusion_matrix(correct_labels, predictions, title = "Confusion Matrix
     print(f"Confusion matrix: \n{disp.confusion_matrix}")
     plt.tight_layout()
     plt.show()
+
+
+
+
+
+
+
+
 
 
 
@@ -227,10 +299,9 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                          # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 1                                                         # fixed number of epochs
+    epochs = 3                                                         # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9]]
     subset_names = ['RGB', 'Atmosperic_Factors']
-    pretrained_flag = 0
 
     # DATASET
     dataset_path = '../dataset/'
@@ -242,64 +313,84 @@ def main () :
     for i in range(len(labels)) : 
         dict_class.update({labels[i] : i})
 
-    print("CREATING DATASET...")
-    train_instances, train_label, validation_instances, validation_labels, test_instances, test_label = [], [], [], [], [], []
-    with tqdm(total=num_classes,  unit='class') as pbar:
-        for label in os.listdir(dataset_path) :
-            label_dir = os.path.join(dataset_path, label)
-            images = os.listdir(label_dir)
+    print("DATA PRE-PROCESSING")
+    train_instances, train_label, test_instances, test_label = [], [], [], []
+    if not SKIP_DATASET_CREATION :
+        print("Loading images from EUROSAT dataset")
+        with tqdm(total=num_classes,  unit='class') as pbar:
+            for label in os.listdir(dataset_path) :
+                label_dir = os.path.join(dataset_path, label)
+                images = os.listdir(label_dir)
 
-            m_training = int(len(images) * fraction_train)          # Training set
-            for i in range(m_training) : 
-                img_path = label_dir + '/' + images[i]
-                train_instances.append(load_data(img_path))
-                train_label.append(dict_class[label])
+                m_training = int(len(images) * fraction_train)          # Training set
+                for i in range(m_training) : 
+                    img_path = label_dir + '/' + images[i]
+                    train_instances.append(load_img(img_path))
+                    train_label.append(dict_class[label])
 
-            for i in range(m_training, len(images)) :               # Test set
-                img_path = label_dir + '/' + images[i]
-                test_instances.append(load_data(img_path))
-                test_label.append(dict_class[label])
-            pbar.update(1)
+                for i in range(m_training, len(images)) :               # Test set
+                    img_path = label_dir + '/' + images[i]
+                    test_instances.append(load_img(img_path))
+                    test_label.append(dict_class[label])
+                pbar.update(1)
 
-    train_instances = np.array(train_instances)
-    test_instances = np.array(test_instances)
-    mean, std = calculate_mean_std(train_instances, test_instances, bands) 
+        train_instances = np.array(train_instances)
+        test_instances = np.array(test_instances)
+        print('Saving EUROSAT iamges as numpy arrays')
+        save_to_hdf5(train_instances, test_instances, directory_name="EUROSAT_numpy", file_name="imgs_numpy.h5", train_label=train_label, test_label=test_label)
+        print('Done')
+    else : 
+        print('Loading pre-processed EUROSAT dataset as numpy arrays')
+        train_instances, train_label, test_instances, test_label = load_hdf5_EUROSAT(file_path="../EUROSAT_numpy/imgs_numpy.h5")
+        print("Done")
+
+    num_train_instances = len(train_instances)
+    num_test_instances = len(test_instances)
+    print('Calculating mean and standard deviation for each of the 13 channels')   
+    #mean, std = calculate_mean_std(train_instances, test_instances, bands) 
+    print("Done")
+
     transform = transforms.Compose([        # Define transformations to apply to the images (e.g., resizing, normalization)
         transforms.ToPILImage(),
         transforms.Resize(256),             # Resize images to 256x256                                                          
         transforms.CenterCrop(224),         # Crop the images 224x224, required by resnet50
         transforms.ToTensor(),              # Convert images to PyTorch tensors (standardization automatically applied)                                                                                                                                                                           
-        transforms.Normalize(mean = mean, std = std)                        # Normalize images
+        #transforms.Normalize(mean = mean, std = std)                        # Normalize images
     ])
     
-
     # Main dataset, 13 channels
-    train_dataset = EuroSATDataset(train_instances, train_label, transform)
-    #validation_dataset = EuroSATDataset  
+    train_dataset = EuroSATDataset(train_instances, train_label, transform) 
     test_dataset = EuroSATDataset(test_instances, test_label, transform)  
 
     train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
     test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True, generator = g_device)
-
-    print("DATASET CREATION COMPLETE\n\n")
+    print("DATA PRE-PROCESSING COMPLETE\n\n")
     
-
+    
     if (ANALYSIS == 1) : 
         print("Starting analysis: different resnet50s are trained on different band combinations; the outputs are weighted before producing an output")
 
         print("Creating dataset subsets...")
-        # Subdataset with lesser channels
-        train_dataset_RGB = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[0]], train_label, transform)
-        train_dataset_atmosferic = EuroSATDataset(np.array(train_instances)[:,:,:,subset_bands[1]], train_label, transform)  
+        # Sub dataset with lesser channels
+        train_datasets_subchannels = create_EuroSATDatasets(train_instances, train_label, subset_bands, transform)
+        test_datasets_subchannels = create_EuroSATDatasets(test_instances, test_label, subset_bands, transform)
 
+        # Train validation split of the images
+        train_val_datasets = train_val_split_datasets(train_datasets_subchannels, fraction_train, generator = g_device)
+        train_datasets_subchannels, val_datasets_subchannels = zip(*train_val_datasets)
 
-        RGB_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_RGB, batch_size = batch_size, shuffle = True, generator = g_device)
-        atmos_channels_train_data_loader = torch.utils.data.DataLoader(train_dataset_atmosferic, batch_size = batch_size, shuffle = True, generator = g_device)
+        # Creating data loaders
+        dataloader_train_list, dataloader_val_list, dataloader_test_list= create_data_loaders(train_datasets_subchannels, val_datasets_subchannels, test_datasets_subchannels, batch_size, g_device)
+        print(dataloader_train_list)
         print("Complete")
         
+
+        # TRAINING each model individually
         model_parameters_path = '../parameters'
+        model_list = []
         for i, sub_bands in enumerate(subset_bands) :
-            model = resnet50(weights = None)
+            # TODO AGGIUNGERE FATTO CHE SE SONO NELLA BANDA RGB USO PESI GIà PRETRAINED
+            model = resnet50(weights = ResNet50_Weights.DEFAULT)
             num_features = model.fc.in_features     # number of features in input in the last FC layer
             model.fc = torch.nn.Linear(num_features, num_classes)
             model.to(DEVICE)
@@ -308,19 +399,71 @@ def main () :
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
             model_parameters_name = f'{subset_names[i]}.pth'
-            print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} bands")
-            resnet50_training(model=model, train_data = RGB_channels_train_data_loader, lf=loss_funct, optimizer=optimizer, epochs=epochs)
+            print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} band")
+            resnet50_training(model, dataloader_train_list[i], loss_funct, optimizer, epochs)
             save_model_parameters(model, model_parameters_path, model_parameters_name)
 
+            model_list.append(model) # All the net is locally stored (shallow copy) inside the list
+        
+
+        # VALIDATION
+        # We use the validation set to determine the weights used for the ensembling of the resnet's (the weight w_i is the accuracy of the resnet i)
+        print("\nValidation: start") 
+        ensamble_weights = []      
+        with tqdm(total=len(model_list), unit='models') as valbar:
+            for i, model in enumerate(model_list) :
+                results = resnet50_test(model, dataloader_val_list[i]) 
+                ensamble_weights.append(results[0])  # Taking only the accuracy from the method resnet50_test
+                valbar.update(1)
+
+        print("\nValidation: done") 
+
+
+
+
+        # TESTING
+        print("\nTesting: start") 
+        all_classifiers_predictions = []     
+        with tqdm(total=len(model_list), unit='models') as testbar:
+
+            # First testing all models and transforming the class predictions in one hot encoding
+            for i, model in enumerate(model_list) :
+                accuracy, predictions, true_labels = resnet50_test(model, dataloader_test_list[i])
+                predictions = to_one_hot(predictions, num_classes)
+                all_classifiers_predictions.append(predictions)     # list of numpy arrays
+                testbar.update(1)
+
+
+        correct_pred = 0
+        num_images = len(all_classifiers_predictions[0])
+        with tqdm(total=num_images, unit='img') as bar:
+            for i in range(num_images) : # For each image
+                
+                one_hot_weighted = []
+                for j in range(len(model_list)) :   # For each classifier
+                    one_hot_weighted.append(all_classifiers_predictions[j][i] * ensamble_weights[j])
+                
+                one_hot_weighted = np.array(one_hot_weighted)
+                result = np.sum(one_hot_weighted, axis=0) # Sum element-wise along the columns
+                net_prediction = np.argmax(result)
+
+                # TODO MODIFICARE QUESTO COSA, true_labels[i] SEMPRE UGUALE ALLO STESSO VALORE
+                if net_prediction == true_labels[i] :
+                    correct_pred += 1
+                print(f"Prediction: {net_prediction}")
+                print(f"True label: {true_labels[i]}")
+                bar.update(1)
+
+        accuracy = correct_pred / num_test_instances
+
+        print(F'Accuracy = {accuracy}')
+        print("\nTesting: done") 
 
     elif(ANALYSIS == 2) : 
         print("Starting analysis: PCA layer is added before resnet50 for channel reduction from 13 to 3")
 
         if not SKIP_PCA :  
             # Shape of train_instances (num_instances, 64, 64, 13) ----> (num_samples, 64*64, 13) 
-            num_train_instances = len(train_instances)
-            num_test_instances = len(test_instances)
-
             flattened_train_instances = train_instances.reshape(num_train_instances, -1, 13)
             flattened_test_instances = test_instances.reshape(num_test_instances, -1, 13)
 
@@ -345,23 +488,12 @@ def main () :
             reconstructed_test_imgs = transformed_test_imgs.reshape(num_test_instances, 64, 64, 3)
 
             print('Saving modified dataset...')
-            if not os.path.exists('../PCA_dataset') :
-                os.makedirs('../PCA_dataset')
-            with h5py.File('../PCA_dataset/imagesPCA.h5', 'w') as hf:      # Creation of .h5 file ----> compression lossless
-                # Create a group for train data
-                train_group = hf.create_group('train')
-                train_group.create_dataset('data', data = reconstructed_train_imgs)
-
-                # Create a group for test data
-                test_group = hf.create_group('test')
-                test_group.create_dataset('data', data = reconstructed_test_imgs)
+            save_to_hdf5(reconstructed_test_imgs, reconstructed_test_imgs, directory_name="PCA_dataset", file_name="imagesPCA.h5")
             print('Done')
 
         else : # PCA computation already done
             print('Loading modified PCA dataset...')
-            with h5py.File('../PCA_dataset/imagesPCA.h5', 'r') as hf :
-                reconstructed_train_imgs= hf['train']['data'][:]
-                reconstructed_test_imgs = hf['test']['data'][:]
+            reconstructed_train_imgs, reconstructed_test_imgs = load_hdf5_PCA(file_path="../PCA_dataset/imagesPCA.h5")
             print("Done")
 
         mean, std = calculate_mean_std(reconstructed_train_imgs, reconstructed_test_imgs, bands = 3) 
@@ -397,38 +529,11 @@ def main () :
         print(F'Accuracy = {accuracy}')
         show_confusion_matrix(correct_labels, predictions)
 
-
-
     elif( ANALYSIS == 3) :
         print("Starting analysis: encoder-decoder structure for channel reduction on the dataset. Resnet50 is then trained")
     else :
         print("suca")
         exit(1)
-
-    
-    '''if(pretrained_flag == 0):
-        
-    else:
-        model.load_state_dict(torch.load(pretrained_model_path, map_location=DEVICE))
-        print("Pretrained model has been loaded")
-    '''
-    """ 
-    
-    """
-                 
-
-def taskb ():
-    I = 2 
-
-
-
-def taskc(resnet, input_channels):
-    #Conv2d convert the image from 13 channels to 3 channels in output, using a kernel_size 3x3, letting the image factor to 1(stride = 1), with padding = 1(kernel_size/2)
-    preprocess_layer = nn.Conv2d(input_channels, 3, kernel_size = 3, stride = 1, padding = 1)
-    #Add preprocess layer to resnet 50 
-    model = nn.Sequential(preprocess_layer, resnet)
-    return model
-    
 
 
 if __name__ == '__main__':
