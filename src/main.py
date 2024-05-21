@@ -28,6 +28,7 @@ from torchvision.models import resnet50, ResNet50_Weights
 # sklearn
 from sklearn.decomposition import PCA
 from sklearn import metrics
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 
 parser = argparse.ArgumentParser()
@@ -233,8 +234,10 @@ def resnet50_test(model, data_loader) :
             testbar.update(1)
     
     accuracy = correct_predictions / total
-    return accuracy, np.array(predictions), np.array(true_labels)
-
+    precision = precision_score(true_labels, predictions, average='weighted')
+    recall = recall_score(true_labels, predictions, average='weighted')
+    f1 = f1_score(true_labels, predictions, average='weighted')
+    return accuracy, precision, recall, f1, np.array(predictions), np.array(true_labels)
 
 def to_one_hot(predictions, num_classes) :
     predictions_tensor = torch.tensor(predictions, dtype=torch.long)
@@ -299,7 +302,7 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 12                                                          # fixed number of epochs
+    epochs = 1                                                         # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9], [4,5,6], [7,11,12]]
     subset_names = ['RGB', 'Atmosperic_Factors', 'Red_Edge', 'SWIR']
 
@@ -429,7 +432,7 @@ def main () :
             # First testing all models and transforming the class predictions in one hot encoding
             for i, model in enumerate(model_list) :
                 model.eval()
-                accuracy, predictions, true_labels = resnet50_test(model, dataloader_test_list[i])
+                accuracy, precision, recall, f1, predictions, true_labels = resnet50_test(model, dataloader_test_list[i])
                 predictions = to_one_hot(predictions, num_classes)
                 all_classifiers_predictions.append(predictions)     # list of numpy arrays
                 testbar.update(1)
@@ -455,8 +458,15 @@ def main () :
                 bar.update(1)
 
         accuracy = correct_pred / num_images
+        precision = precision_score(true_labels, predict_confusion_matrix, average='weighted')
+        recall = recall_score(true_labels, predict_confusion_matrix, average='weighted')
+        f1 = f1_score(true_labels, predict_confusion_matrix, average='weighted')
+
+        print(f'Accuracy = {accuracy}')
+        print(f'Precision = {precision}')
+        print(f'Recall = {recall}')
+        print(f'F1 Score = {f1}')
         show_confusion_matrix(predict_confusion_matrix, true_labels)
-        print(F'Accuracy = {accuracy}')
         print("\nTesting: done") 
 
     elif(ANALYSIS == 2) : 
@@ -525,8 +535,11 @@ def main () :
 
         model.eval()
         print("\nTesting: start")
-        accuracy, predictions, correct_labels = resnet50_test(model, test_data_loader, loss_funct)
+        accuracy, precision, recall, f1, predictions, correct_labels = resnet50_test(model, test_data_loader)   #loss_funct
         print(F'Accuracy = {accuracy}')
+        print(f'Precision = {precision}')
+        print(f'Recall = {recall}')
+        print(f'F1 Score = {f1}')
         show_confusion_matrix(correct_labels, predictions)
 
     elif( ANALYSIS == 3) :
