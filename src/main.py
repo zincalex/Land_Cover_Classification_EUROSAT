@@ -49,7 +49,7 @@ print(f"Using {DEVICE} device")
 
 
 
-
+verita = []
 # CLASSES AND FUNCTIONS 
 class EuroSATDataset(Dataset) : 
     """Eurosat dataset.
@@ -227,7 +227,7 @@ def resnet50_test(model, data_loader) :
 
             predictions.extend(predicted.cpu().numpy())
             true_labels.extend(labels.cpu().numpy())
-
+            verita.extend(labels.cpu().numpy())
             total += labels.size(0)
             correct_predictions += (predicted == labels).sum().item()
             testbar.update(1)
@@ -297,11 +297,11 @@ def main () :
     fraction_train = 0.8                                                # training split
     fraction_test = 1 - fraction_train                                  # test split
     batch_size = 32                                                     # batch size
-    lr = 1e-4                                                          # learning rate
+    lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 3                                                         # fixed number of epochs
-    subset_bands = [[3,2,1], [0, 8, 9]]
-    subset_names = ['RGB', 'Atmosperic_Factors']
+    epochs = 12                                                          # fixed number of epochs
+    subset_bands = [[3,2,1], [0, 8, 9], [4,5,6], [7,11,12]]
+    subset_names = ['RGB', 'Atmosperic_Factors', 'Red_Edge', 'SWIR']
 
     # DATASET
     dataset_path = '../dataset/'
@@ -381,7 +381,6 @@ def main () :
 
         # Creating data loaders
         dataloader_train_list, dataloader_val_list, dataloader_test_list= create_data_loaders(train_datasets_subchannels, val_datasets_subchannels, test_datasets_subchannels, batch_size, g_device)
-        print(dataloader_train_list)
         print("Complete")
         
 
@@ -389,8 +388,11 @@ def main () :
         model_parameters_path = '../parameters'
         model_list = []
         for i, sub_bands in enumerate(subset_bands) :
-            # TODO AGGIUNGERE FATTO CHE SE SONO NELLA BANDA RGB USO PESI GIà PRETRAINED
-            model = resnet50(weights = ResNet50_Weights.DEFAULT)
+            if i == 0 : 
+                model = resnet50(weights = ResNet50_Weights.DEFAULT)
+            else :
+                model = resnet50(weights = None)
+
             num_features = model.fc.in_features     # number of features in input in the last FC layer
             model.fc = torch.nn.Linear(num_features, num_classes)
             model.to(DEVICE)
@@ -412,13 +414,11 @@ def main () :
         ensamble_weights = []      
         with tqdm(total=len(model_list), unit='models') as valbar:
             for i, model in enumerate(model_list) :
+                model.eval()
                 results = resnet50_test(model, dataloader_val_list[i]) 
                 ensamble_weights.append(results[0])  # Taking only the accuracy from the method resnet50_test
                 valbar.update(1)
-
         print("\nValidation: done") 
-
-
 
 
         # TESTING
@@ -428,34 +428,34 @@ def main () :
 
             # First testing all models and transforming the class predictions in one hot encoding
             for i, model in enumerate(model_list) :
+                model.eval()
                 accuracy, predictions, true_labels = resnet50_test(model, dataloader_test_list[i])
                 predictions = to_one_hot(predictions, num_classes)
                 all_classifiers_predictions.append(predictions)     # list of numpy arrays
                 testbar.update(1)
 
-
         correct_pred = 0
         num_images = len(all_classifiers_predictions[0])
+        predict_confusion_matrix = []
         with tqdm(total=num_images, unit='img') as bar:
             for i in range(num_images) : # For each image
                 
                 one_hot_weighted = []
                 for j in range(len(model_list)) :   # For each classifier
+                    print(f'predizione modello {j} su immagine {i}: {all_classifiers_predictions[j][i]}')
                     one_hot_weighted.append(all_classifiers_predictions[j][i] * ensamble_weights[j])
                 
                 one_hot_weighted = np.array(one_hot_weighted)
                 result = np.sum(one_hot_weighted, axis=0) # Sum element-wise along the columns
                 net_prediction = np.argmax(result)
 
-                # TODO MODIFICARE QUESTO COSA, true_labels[i] SEMPRE UGUALE ALLO STESSO VALORE
+                predict_confusion_matrix.append(net_prediction)
                 if net_prediction == true_labels[i] :
                     correct_pred += 1
-                print(f"Prediction: {net_prediction}")
-                print(f"True label: {true_labels[i]}")
                 bar.update(1)
 
-        accuracy = correct_pred / num_test_instances
-
+        accuracy = correct_pred / num_images
+        show_confusion_matrix(predict_confusion_matrix, true_labels)
         print(F'Accuracy = {accuracy}')
         print("\nTesting: done") 
 
