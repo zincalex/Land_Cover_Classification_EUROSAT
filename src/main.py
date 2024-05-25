@@ -16,6 +16,7 @@ from tqdm import tqdm               # progress bar
 import torch
 import torch.nn as nn
 import torch.utils
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.models import resnet50, ResNet50_Weights
@@ -249,8 +250,14 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
     Returns: 
         A list with the training loss for each epoch
     """
+   
+    # Scheduler setup
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    
     train_losses = []
-    for epoch in range(epochs):    
+    for epoch in range(epochs): 
+        model.train()  # Put the model in training mode
+         
         with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
             for data in train_data_loader :
                 images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
@@ -265,6 +272,10 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
         train_losses.append(loss.item())
 
+
+        print(f'Learning rate: {optimizer.param_groups[0]["lr"]:.6f}\n')
+        # Step the scheduler to update the learning rate
+        scheduler.step()
     return train_losses
 
 
@@ -438,7 +449,7 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 2                                                          # fixed number of epochs
+    epochs = 20                                                         # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9], [4,5,6], [7,11,12]]
     subset_names = ['RGB', 'Atmosperic_Factors', 'Red_Edge', 'SWIR']
 
