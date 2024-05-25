@@ -245,7 +245,11 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
         lf (torch loss function):                               loss function
         optimizer (torch.optim):                                optimizer used in the backward pass 
         epochs:                                                 number of epochs for training
+
+    Returns: 
+        A list with the training loss for each epoch
     """
+    train_losses = []
     for epoch in range(epochs):    
         with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
             for data in train_data_loader :
@@ -259,6 +263,9 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
                 optimizer.step()
                 inpbar.update(1)
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
+        train_losses.append(loss.item())
+
+    return train_losses
 
 
 def resnet50_test(model, test_data_loader) :
@@ -325,6 +332,35 @@ def show_confusion_matrix(true_labels, predictions, title = "Confusion Matrix") 
     plt.show()
 
 
+def plot_train_loss(losses, epochs, sub_band_names = None) :
+    """Show the evolution of the training loss with respect to the epochs. 
+ 
+    Args:
+        losses (list):              can be a list of train loss values, or a list of lists with train loss values
+        epochs (int):               number of epochs done during training
+        sub_band_names (list):      list of strings
+    """ 
+    plt.figure(figsize=(10, 6))
+    x_range = range(1, epochs + 1)
+    colors = ["blue", "green", "red", "purple"]
+    
+    if len(losses) == epochs : # Case when only 1 resnet is trained
+        plt.plot(x_range, losses, label='ResNet Classifier', color=colors[0])
+        plt.title('PCA Analysis')
+    else:
+        for i, loss in enumerate(losses) : 
+            plt.plot(x_range, loss, label=f'ResNet Classifier on {sub_band_names[i]}', color=colors[i])
+        plt.title('Ensemble Resnet50s Analysis')
+
+    plt.xticks(np.arange(0, epochs + 1, step=2))   
+    plt.xlabel('Epochs')
+    plt.ylabel('Training Loss')
+    plt.legend(loc="upper right")
+    plt.show()
+
+
+
+
 def compute_param_grid(train_instances, test_instances, bands, std) : 
 
     dataset = np.concatenate((train_instances, test_instances), axis=0)
@@ -355,10 +391,6 @@ def compute_param_grid(train_instances, test_instances, bands, std) :
     print(min_values_channels)
     print(amplitude)
     return {"Optimal weights" : opt_weights, "Binary weights" : bin_weights_6}
-
-
-
-
 
 #TODO rimuovere questo metodo
 def show_image_RGB(img) : 
@@ -406,7 +438,7 @@ def main () :
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
     factor = 20                                                         # learning rate factor for tuning
-    epochs = 10                                                          # fixed number of epochs
+    epochs = 2                                                          # fixed number of epochs
     subset_bands = [[3,2,1], [0, 8, 9], [4,5,6], [7,11,12]]
     subset_names = ['RGB', 'Atmosperic_Factors', 'Red_Edge', 'SWIR']
 
@@ -456,6 +488,14 @@ def main () :
     num_test_instances = len(test_instances)
 
     if (ANALYSIS == 1) : 
+
+        transform = transforms.Compose([                            
+            transforms.ToPILImage(), 
+            transforms.Resize(256),                                                                                          
+            transforms.CenterCrop(224),                             
+            transforms.ToTensor(),                                                                                                                                                                                                                       
+        ])
+
         print("Starting analysis: Ensamble of resnet50s trained on different band combinations; the outputs are weighted before producing an output")
         print("Creating dataset subsets...")
         # Sub dataset with lesser channels
@@ -474,6 +514,7 @@ def main () :
         # TRAINING each model individually
         model_parameters_path = '../parameters'
         model_list = []
+        ensamble_losses = []
         for i, sub_band in enumerate(subset_bands) :
             model = resnet50(weights = ResNet50_Weights.DEFAULT)
             num_features = model.fc.in_features     # number of features in input in the last FC layer
@@ -484,7 +525,8 @@ def main () :
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
             print(f"Starting Training on resnet50 number {i+1} on {subset_names[i]} band")
-            resnet50_training(model, dataloader_train_list[i], loss_funct, optimizer, epochs)
+            train_losses = resnet50_training(model, dataloader_train_list[i], loss_funct, optimizer, epochs)
+            ensamble_losses.append(train_losses)
 
             model_parameters_name = f'{subset_names[i]}.pth'
             save_model_parameters(model, model_parameters_path, model_parameters_name)
@@ -541,6 +583,7 @@ def main () :
         recall = metrics.recall_score(true_labels, predicted_labels, average='weighted')
         f1 = metrics.f1_score(true_labels, predicted_labels, average='weighted')
         show_confusion_matrix(predicted_labels, true_labels)
+        plot_train_loss(ensamble_losses, epochs, subset_names)
 
         print(F'Accuracy = {accuracy}')
         print(f'Precision = {precision}')
@@ -617,8 +660,8 @@ def main () :
         
         loss_funct = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)  
-        resnet50_training(model, train_data_loader, loss_funct, optimizer, epochs)
-
+        train_losses = resnet50_training(model, train_data_loader, loss_funct, optimizer, epochs)
+        
         
         print("\nTesting: start")
         model.eval()
@@ -627,6 +670,7 @@ def main () :
         recall = metrics.recall_score(true_labels, predictions, average='weighted')
         f1 = metrics.f1_score(true_labels, predictions, average='weighted')
         show_confusion_matrix(true_labels, predictions)
+        plot_train_loss(train_losses, epochs)
 
         print(F'Accuracy = {accuracy}')
         print(f'Precision = {precision}')
