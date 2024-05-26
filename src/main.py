@@ -265,7 +265,6 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
                 inpbar.update(1)
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
         train_losses.append(loss.item())
-        print(f'Learning rate: {optimizer.param_groups[0]["lr"]:.6f}\n')
     return train_losses
 
 
@@ -523,7 +522,6 @@ def main () :
         print(f'Recall = {recall}')
         print(f'F1 Score = {f1}')
         
-
     elif(ANALYSIS == 2) : # PCA ANALYSIS
         print("Starting analysis: PCA layer is added before resnet50 for channel reduction from 13 to 3")
         if not SKIP_PCA : 
