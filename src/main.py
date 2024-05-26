@@ -250,8 +250,14 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
     Returns: 
         A list with the training loss for each epoch
     """
+   
+    # Scheduler setup
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    
     train_losses = []
-    for epoch in range(epochs):    
+    for epoch in range(epochs): 
+        model.train()  # Put the model in training mode
+         
         with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
             for data in train_data_loader :
                 images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
@@ -266,6 +272,10 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
         train_losses.append(loss.item())
 
+
+        print(f'Learning rate: {optimizer.param_groups[0]["lr"]:.6f}\n')
+        # Step the scheduler to update the learning rate
+        scheduler.step()
     return train_losses
 
 
