@@ -17,9 +17,12 @@ from tqdm import tqdm               # progress bar
 import torch
 import torch.utils
 import torch.nn as nn
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import densenet121, DenseNet121_Weights, densenet161, DenseNet161_Weights
+
 
 # Sklearn
 from sklearn import metrics
@@ -30,7 +33,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-t", type = int, help="Analysis type", default = 0)
 args = parser.parse_args()
 
-SKIP_DATASET_CREATION = True
+SKIP_DATASET_CREATION = False
 SKIP_PCA = False
 ANALYSIS = args.t
 DEVICE = (
@@ -250,6 +253,10 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
     Returns: 
         A list with the training loss for each epoch
     """
+
+    # Scheduler setup
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+
     train_losses = []
     for epoch in range(epochs): 
         with tqdm(total=len(train_data_loader), unit='instance') as inpbar:
@@ -265,6 +272,7 @@ def resnet50_training(model, train_data_loader, lf, optimizer, epochs):
                 inpbar.update(1)
         print(f'Training loss: {loss.item()}          epoch: {epoch}\n')
         train_losses.append(loss.item())
+        scheduler.step()
     return train_losses
 
 
@@ -371,8 +379,8 @@ def main () :
     fraction_test = 1 - fraction_train                                  # test split
     batch_size = 32                                                     # batch size
     lr = 1e-4                                                           # learning rate
-    epochs = 5                                                          # fixed number of epochs
-    subset_bands = [[3,2,1], [0, 8, 9], [4,5,6], [7,11,12]]
+    epochs = 20                                                         # fixed number of epochs
+    subset_bands = [[3,2,1], [0, 9, 10], [4,5,6], [7,11,12]]
     subset_names = ['RGB', 'Atmosperic_Factors', 'Red_Edge', 'SWIR']
 
     # DATASET
@@ -448,11 +456,17 @@ def main () :
         model_list = []
         ensemble_losses = []
         for i, sub_band in enumerate(subset_bands) :
+            # DenseNet structure
+            #model = densenet161(DenseNet161_Weights.DEFAULT)
+            #num_features = model.classifier.in_features     # number of features in input in the last FC layer
+            #model.classifier = torch.nn.Linear(num_features, num_classes)
+
+            # ResNet structure
             model = resnet50(weights = ResNet50_Weights.DEFAULT)
             num_features = model.fc.in_features     # number of features in input in the last FC layer
             model.fc = torch.nn.Linear(num_features, num_classes)
+
             model.to(DEVICE)
-            
             loss_funct = nn.CrossEntropyLoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)         #optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
@@ -509,7 +523,7 @@ def main () :
                     correct_pred += 1
                 bar.update(1)
 
-
+        # Parameters estimation
         accuracy = correct_pred / num_images
         precision = metrics.precision_score(true_labels, predicted_labels, average='weighted')
         recall = metrics.recall_score(true_labels, predicted_labels, average='weighted')
@@ -522,6 +536,7 @@ def main () :
         print(f'Recall = {recall}')
         print(f'F1 Score = {f1}')
         
+
     elif(ANALYSIS == 2) : # PCA ANALYSIS
         print("Starting analysis: PCA layer is added before resnet50 for channel reduction from 13 to 3")
         if not SKIP_PCA : 
@@ -581,11 +596,17 @@ def main () :
 
 
         print("\nTraining: start")    
+        # DenseNet structure
+        #model = densenet161(DenseNet161_Weights.DEFAULT)
+        #num_features = model.classifier.in_features     # number of features in input in the last FC layer
+        #model.classifier = torch.nn.Linear(num_features, num_classes)
+
+        # ResNet structure
         model = resnet50(weights = ResNet50_Weights.DEFAULT)    
         num_features = model.fc.in_features     # number of features in input in the last FC layer
         model.fc = torch.nn.Linear(num_features, num_classes)
+
         model.to(DEVICE)
-        
         loss_funct = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)  
         train_losses = resnet50_training(model, train_data_loader, loss_funct, optimizer, epochs)
@@ -599,7 +620,7 @@ def main () :
         f1 = metrics.f1_score(true_labels, predictions, average='weighted')
         show_confusion_matrix(true_labels, predictions)
         plot_train_loss(train_losses, epochs)
-
+        
         print(F'Accuracy = {accuracy}')
         print(f'Precision = {precision}')
         print(f'Recall = {recall}')
@@ -612,7 +633,8 @@ def main () :
             transforms.ToPILImage(), 
             transforms.Resize(256),                                                                                          
             transforms.CenterCrop(224),                             
-            transforms.ToTensor(),                                                                                                                                                                                                                       
+            transforms.ToTensor(),          
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])                                                                                                                                                                                                                
         ])
 
         print("STARTING ANALYSIS: resnet50 architecture applied to RGB band")
@@ -623,7 +645,13 @@ def main () :
         test_data_loader = torch.utils.data.DataLoader(test_dataset_RGB, batch_size = batch_size, shuffle = True, generator = g_device)
         
 
-        # TRAINING 
+        # TRAINING
+        # DenseNet structure
+        #model = densenet161(DenseNet161_Weights.DEFAULT)
+        #num_features = model.classifier.in_features     # number of features in input in the last FC layer
+        #model.classifier = torch.nn.Linear(num_features, num_classes)
+
+        # ResNet structure
         model = resnet50(weights = ResNet50_Weights.DEFAULT)
         num_features = model.fc.in_features     # number of features in input in the last FC layer
         model.fc = torch.nn.Linear(num_features, num_classes)
