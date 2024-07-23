@@ -33,8 +33,9 @@ Given that the device has CUDA installed, the libraries that have been used
 can be downloaded through pip
 ```shell
 pip install numpy
+pip install h5py
 ```
- pip install h5py
+ 
  pip install tifffile
  pip install matplotlib
  pip install tqdm
