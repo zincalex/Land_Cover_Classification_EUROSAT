@@ -8,6 +8,7 @@
 - [Installation](#installation)
 - [Requirements](#requirements)
 - [Usage](#usage)
+- [Results](#results)
 
 
 ## Overview
@@ -60,11 +61,11 @@ If the option was activated, the dataset is loaded instead of converting each .t
 
 The `-p` option manages whether the PCA rapresentation of the images is saved in the PCA_dataset directory as a .h5 file (useful for multiple runs of the program, in order to save time).
 
-It is suggested to build each dataset once and after that remember to specify the `-d` and `-p` option to be 1. In this way the next runs will be way faster.
+It is suggested to build each compressed dataset once and after that remember to specify the `-d` and `-p` option to be 1. In this way the next runs will be way faster.
 
 ## Results
 A more detailed analysis of the results is in the [Report](Report.pdf).
-The best results have been achived by using DenseNet161 with accuracy 96.8%.
+The best results have been achived by using DenseNet161 with final accuracy as 96.9%.
 
 ![confusion matrix](data/reference_images/densenet161_ENSEMBLE.png)
 ![trainloss](data/reference_images/PLOT_densenet161_ENSEMBLE.png)
