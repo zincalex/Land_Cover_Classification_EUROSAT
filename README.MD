@@ -1,4 +1,7 @@
-## Land Cover Classification using Sentinel-2 Satellite Images: Ensemble and PCA analysis
+## Land Cover Classification using Sentinel-2 Satellite Images
+
+![Overview Image](data/reference_images/general%20aim.jpg)<br>
+[Source](https://arxiv.org/pdf/1709.00029.pdf)
 
 ## Table of Contents
 - [Overview](#overview)
@@ -7,13 +10,10 @@
 - [Usage](#usage)
 
 
-**Overview**
-![Overview Image](data/reference_images/general%20aim.jpg)<br>
-[Source](https://arxiv.org/pdf/1709.00029.pdf)
-
-
+## Overview
 A satellite scans the Earth to acquire images of it. Patches extracted out of these images are used for classification.
 The aim is to automatically provide labels describing the represented physical land type or how the land is used.
+
 EUROSAT dataset has been used for this project and there are in total 27,000 labeled 
 and georeferenced images, with 13 spectral bands each, consisting of 10 different classes.
 The aim of this project is to leverage information extracted from multiple
@@ -22,12 +22,12 @@ Two main analysis have been conducted: an ensemble DNN and a PCA dimensionality 
 
 This is a project for the course Deep Learning taken by prof. Loris Nanni in the a.y. 2023/2024
 
-**Requirements** 
+## Requirements 
 - Python 3.11.3
 - CUDA 12.4.1
 - PyTorch 2.2.2 +cu121
 
-**Installation** 
+## Installation 
 Given that the device has CUDA installed, the libraries that have been used
 can be downloaded through pip
 - pip install numpy
@@ -39,9 +39,9 @@ can be downloaded through pip
 - pip install scikit-learn
 
 The dataset is open source and is avaiable via Zenovo [here](https://zenodo.org/records/7711810/files/EuroSAT_MS.zip?download=1).
-The extract the inner directories (the one with the labels), inside the dataset directory of this project. Then you are good to go.
+Then extract the labeled directories, inside the `dataset` directory of this project. Now, you are good to go.
 
-**Usage**
+## Usage
 To run the main program use the python script `main.py` inside the src folder. Such script accepts various optional parameters: 
 
 ```
@@ -62,7 +62,7 @@ The `-p` option manages whether the PCA rapresentation of the images is saved in
 
 It is suggested to build each dataset once and after that remember to specify the `-d` and `-p` option to be 1. In this way the next runs will be way faster.
 
-**Results**
+## Results
 A more detailed analysis of the results is in the [Report](Report.pdf).
 The best results have been achived by using DenseNet161 with accuracy 96.8%.
 
