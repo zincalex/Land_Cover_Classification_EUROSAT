@@ -30,17 +30,15 @@ This is a project for the course Deep Learning taken by prof. Loris Nanni in the
 
 ## Installation 
 Given that the device has CUDA installed, the libraries that have been used
-can be downloaded through pip
+can be downloaded through pip.
+- Basic libraries used
 ```shell
-pip install numpy
-pip install h5py
+pip install numpy, scikit-learn, h5py, tifffile, matplotlib, tqdm
 ```
- 
- pip install tifffile
- pip install matplotlib
- pip install tqdm
- pip install torch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 --index-url https://download.pytorch.org/whl/cu121
- pip install scikit-learn
+- Pytorch download setup
+```shell
+pip install torch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 --index-url https://download.pytorch.org/whl/cu121
+```
 
 The dataset is open source and is avaiable via Zenovo [here](https://zenodo.org/records/7711810/files/EuroSAT_MS.zip?download=1).
 Then extract the labeled directories, inside the `dataset` directory of this project. Now, you are good to go.
@@ -70,4 +68,9 @@ It is suggested to build each compressed dataset once and after that remember to
 A more detailed analysis of the results is in the [Report](Report.pdf).
 The best results have been achived by using DenseNet161 with final accuracy as 96.9%.
 
-![trainloss](data/reference_images/PLOT_densenet161_ENSEMBLE.png)
+<p align="center">
+  <img src="https://github.com/zincalex/Land_Cover_Classification_EUROSAT/blob/main/data/reference_images/densenet161_ENSEMBLE.png" />
+</p>
+<p align="center">
+  <img src="https://github.com/zincalex/Land_Cover_Classification_EUROSAT/blob/main/data/reference_images/PLOT_densenet161_ENSEMBLE.png" />
+</p>
