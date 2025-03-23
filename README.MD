@@ -21,8 +21,6 @@ The aim of this project is to leverage information extracted from multiple
 bands so as to maximize classification performance. 
 Two main analysis have been conducted: an ensemble DNN and a PCA dimensionality reduction tecnique applied to each image.
 
-This is a project for the course Deep Learning taken by prof. Loris Nanni in the a.y. 2023/2024
-
 ## Requirements 
 - Python 3.11.3
 - CUDA 12.4.1
